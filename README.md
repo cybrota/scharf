@@ -1,5 +1,4 @@
 # Sharfer
-
 ![Logo](https://github.com/cybrota/sharfer/blob/main/sharfer-logo.png)
 
 Identify all third-party CI/CD actions used in your Organization without pinned SHA-commits using Sharfer (SHA Rectifier for CI/CD workflows). Sharfer is a CLI tool designed to audit GitHub and GitLab repositories within a specified organization for action workflows that use third-party actions without SHA-based references.
