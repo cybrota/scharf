@@ -30,9 +30,18 @@ Scharf helps you maintain a secure development lifecycle by ensuring that all th
 
 Scharf lets you identify and mitigate against supply-chain attacks similar to "tj-actions/changed-files" compromise.
 
+"GitHub's own official tutorials use tags instead of full commit shas. What a mess" - A Ycombinator Hackernews Reader
+
+"Github Actions is definitely a vector for abuse." - Another Hackernews Reader
+
 See:
-- https://www.cisa.gov/news-events/alerts/2025/03/18/supply-chain-compromise-third-party-github-action-cve-2025-30066
-- https://github.com/advisories/ghsa-mrrh-fwg8-r2c3
+- Supply Chain Compromise of Third-Party GitHub Action, CVE-2025-30066 https://www.cisa.gov/news-events/alerts/2025/03/18/supply-chain-compromise-third-party-github-action-cve-2025-30066
+
+- Whose code am I running in GitHub ? Actions?https://alexwlchan.net/2025/github-actions-audit/
+- tj-actions changed-files through 45.0.7 allows remote attackers to discover secrets by reading actions logs.
+https://github.com/advisories/ghsa-mrrh-fwg8-r2c3
+
+
 
 for how supply chain attacks can exfiltrate sensitive data from CI/CD workflows.
 
