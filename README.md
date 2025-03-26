@@ -1,5 +1,4 @@
 # Scharf
----
 
 <picture width="500">
   <source
