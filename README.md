@@ -1,6 +1,20 @@
 # Scharf
 ---
-![Logo](https://github.com/cybrota/sharfer/blob/main/scharf-logo.png)
+
+<picture width="500">
+  <source
+    width="600"
+    media="(prefers-color-scheme: dark)"
+    src="https://github.com/cybrota/sharfer/blob/main/scharf-logo.png"
+    alt="Scarfer logo (dark)"
+  />
+  <img
+    width="600"
+    src="https://github.com/cybrota/sharfer/blob/main/scharf-logo.png"
+    alt="Sharfer logo (light)"
+  />
+</picture>
+
 
 Protects your GitHub actions from supply-chain attacks!
 
