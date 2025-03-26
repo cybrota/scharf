@@ -5,12 +5,12 @@
   <source
     width="600"
     media="(prefers-color-scheme: dark)"
-    src="https://github.com/cybrota/sharfer/blob/main/scharf-logo.png"
+    src="https://github.com/cybrota/sharfer/blob/main/scharf-logo-d.png"
     alt="Scarfer logo (dark)"
   />
   <img
     width="600"
-    src="https://github.com/cybrota/sharfer/blob/main/scharf-logo.png"
+    src="https://github.com/cybrota/sharfer/blob/main/scharf-logo-l.png"
     alt="Sharfer logo (light)"
   />
 </picture>
