@@ -42,9 +42,7 @@ See:
 https://github.com/advisories/ghsa-mrrh-fwg8-r2c3
 
 
-
-for how supply chain attacks can exfiltrate sensitive data from CI/CD workflows.
-
+Use Scharf to avoid supply chain attacks which can exfiltrate sensitive data from CI/CD workflows.
 
 ## Key Features of Scharf
 
