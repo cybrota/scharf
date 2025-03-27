@@ -34,6 +34,7 @@ func (s *Scanner) ScanRepos(root string, dirPath string, regex *regexp.Regexp) (
 		branches, err := repo.ListBranches()
 		if err != nil {
 			// Log error and continue with next repository.
+			logger.Debug("couldn't detect branches. skipping to next repo")
 			continue
 		}
 
@@ -106,9 +107,9 @@ func (g GitHubVCS) ListRepositories(root string) ([]Repository, error) {
 	var rs []Repository
 	for _, repo := range repos {
 		if shouldIncludeDir(repo.Name()) {
-			logger.Debug("found repository at root", "repo", repo.Name(), "root", root)
 			rs = append(rs, GitRepository{
-				name: repo.Name(),
+				name:      repo.Name(),
+				localPath: fmt.Sprintf("%s/%s", root, repo.Name()),
 			})
 		}
 	}
@@ -118,15 +119,20 @@ func (g GitHubVCS) ListRepositories(root string) ([]Repository, error) {
 
 // GitRepository implements Repository interface
 type GitRepository struct {
-	name string
+	name      string
+	localPath string
 }
 
 func (g GitRepository) Name() string {
 	return g.name
 }
 
+func (g GitRepository) Location() string {
+	return g.localPath
+}
+
 func (g GitRepository) ListBranches() ([]string, error) {
-	return []string{"main"}, nil
+	return ListGitBranches(g.localPath)
 }
 
 func (g GitRepository) ListFiles(loc string) ([]string, error) {
@@ -152,16 +158,24 @@ func (g GitRepository) ReadFile(filePath string) ([]byte, error) {
 	return content, nil
 }
 
+func (g GitRepository) SwitchBranch(branchName string) error {
+	return CheckoutGitBranch(g.localPath, branchName)
+}
+
 // Repository abstracts a single repository and its operations.
 type Repository interface {
 	Name() string
 
+	// Location gets absolute path of repository
+	Location() string
 	// ListBranches returns all branches available in the repository.
 	ListBranches() ([]string, error)
-	// ReadFile retrieves the content of a file given a branch and a file path.
+	// ReadFile retrieves the content of a file given a file path.
 	ReadFile(filePath string) ([]byte, error)
 	// ListFiles returns all file paths under a given directory in a branch.
 	ListFiles(loc string) ([]string, error)
+	// SwitchBranch checks out the repository to given branch
+	SwitchBranch(branchName string) error
 }
 
 // Branch abstracts a branch in a repository.
