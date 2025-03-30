@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"regexp"
 )
 
@@ -22,9 +23,13 @@ type Scanner struct {
 // and scans each file's content for regex matches.
 func (s *Scanner) ScanRepos(root string, dirPath string, regex *regexp.Regexp) (*Inventory, error) {
 	var inventory Inventory
+	absolutePath, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
 
 	// Retrieve repositories from the VCS.
-	repos, err := s.VCS.ListRepositories(root)
+	repos, err := s.VCS.ListRepositories(absolutePath)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +45,7 @@ func (s *Scanner) ScanRepos(root string, dirPath string, regex *regexp.Regexp) (
 
 		// For each branch, enumerate files in the specified directory.
 		for _, branch := range branches {
-			fileNames, err := repo.ListFiles(fmt.Sprintf("%s/%s/%s", root, repo.Name(), dirPath))
+			fileNames, err := repo.ListFiles(fmt.Sprintf("%s/%s/%s", absolutePath, repo.Name(), dirPath))
 			if err != nil {
 				// The directory might not exist on this branch; skip to next branch.
 				logger.Debug("directory might not exist on branch. skipping to next repo")
@@ -49,7 +54,7 @@ func (s *Scanner) ScanRepos(root string, dirPath string, regex *regexp.Regexp) (
 
 			// Process each file found in the directory.
 			for _, fileName := range fileNames {
-				fPath := fmt.Sprintf("%s/%s/%s/%s", root, repo.Name(), dirPath, fileName)
+				fPath := fmt.Sprintf("%s/%s/%s/%s", absolutePath, repo.Name(), dirPath, fileName)
 				content, err := repo.ReadFile(fPath)
 				if err != nil {
 					// Log error and skip this file.

@@ -93,7 +93,7 @@ func main() {
 	}
 
 	cmdRun.PersistentFlags().String("root", ".", "Absolute path of root directory of GitHub repositories")
-	cmdRun.PersistentFlags().String("out", "json", "Output format of findings. Availabe options: json, csv")
+	cmdRun.PersistentFlags().String("out", "json", "Output format of findings. Available options: json, csv")
 
 	var rootCmd = &cobra.Command{Use: "scharf", Long: asciiLogo}
 	rootCmd.AddCommand(cmdRun)
