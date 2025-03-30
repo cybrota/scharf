@@ -7,6 +7,8 @@
 *.dll
 *.so
 *.dylib
+scharf
+scharf.bin
 
 # Test binary, built with `go test -c`
 *.test
