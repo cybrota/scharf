@@ -9,7 +9,7 @@ on:
       - "*"
 
 jobs:
-  semgrep-scan:
+  run-unit-tests:
     runs-on: ubuntu-22.04
 
     steps:
@@ -21,7 +21,7 @@ jobs:
         with:
           go-version: ">=1.24"
 
-      - name: Install Semgrep
+      - name: Run tests
         run: |
           go mod download
           go test
