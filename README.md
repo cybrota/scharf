@@ -1,4 +1,5 @@
 # Scharf
+[![Go Report Card](https://goreportcard.com/badge/github.com/cybrota/sharfer)](https://goreportcard.com/report/github.com/cybrota/sharfer)
 
 <picture width="500">
   <source
