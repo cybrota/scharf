@@ -17,7 +17,7 @@ func ListGitBranches(repoPath string) ([]string, error) {
 	}
 
 	// Get an iterator for the repository's branches
-	branches, err := repo.Branches()
+	branches, err := repo.References()
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve branches: %w", err)
 	}

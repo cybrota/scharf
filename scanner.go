@@ -205,13 +205,13 @@ func (gws GitHubWorkFlowScanner) ScanContent(content []byte, regex *regexp.Regex
 
 // InventoryRecord holds details for a regex match in a file.
 type InventoryRecord struct {
-	Repository string   // Repository name or path
-	Branch     string   // Branch name
-	FilePath   string   // File path where the match was found
-	Matches    []string // Regex match results from the file content
+	Repository string   `json:"repository_name"` // Repository name or path
+	Branch     string   `json:"branch_name"`     // Branch name
+	FilePath   string   `json:"actions_file"`    // File path where the match was found
+	Matches    []string `json:"matches"`         // Regex match results from the file content
 }
 
 // Inventory aggregates multiple inventory records.
 type Inventory struct {
-	Records []InventoryRecord
+	Records []InventoryRecord `json:"findings"`
 }
