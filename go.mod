@@ -1,4 +1,4 @@
-module github.com/cybrota/sharfer
+module github.com/cybrota/scharf
 
 go 1.24.1
 
