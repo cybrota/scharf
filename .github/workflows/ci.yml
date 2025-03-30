@@ -1,4 +1,4 @@
-name: Run security scan
+name: Run Go unit tests
 
 on:
   push:
