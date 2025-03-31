@@ -26,7 +26,7 @@ In addition, Scharf also provides an automatic SHA-commit recommendation for a g
 Install Scharf binary easily on Linux or Mac OS via gobinaries.com:
 
 ```sh
-curl -sf https://gobinaries.com/cybrota/scharf | sh
+curl -sf https://raw.githubusercontent.com/cybrota/scharf/refs/heads/main/install.sh | sh
 ```
 
 and generate a CSV report of your Git workspace, where root is workspace folder that stores all GitHub repositories:
