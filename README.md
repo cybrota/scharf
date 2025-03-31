@@ -23,6 +23,18 @@ Scharf identifies all third-party CI/CD actions used in your Organization withou
 
 In addition, Scharf also provides an automatic SHA-commit recommendation for a given thrid-party action with version.
 
+Install Scharf binary easily on Linux or Mac OS via gobinaries.com:
+
+```sh
+curl -sf https://gobinaries.com/cybrota/scharf | sh
+```
+
+and generate a CSV report of your Git workspace, where root is workspace folder that stores all GitHub repositories:
+
+```sh
+scharf run --root=/path/to/workspace --out=csv
+```
+
 ## Why Scharf?
 
 Scharf is a CLI tool to detect third-party GitHub actions with mutable references.
