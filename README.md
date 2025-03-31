@@ -19,17 +19,26 @@
 Prevent supply-chain attacks for your third-party GitHub actions!
 
 
-Scharf identifies all third-party CI/CD actions used in your Organization without pinned SHA-commits (Protect your CI/CD workflows from supply-chain attacks) creates a analytics-friendly report (CSV, JSON, Syslog) that can be passed to a SIEM system.
+Scharf identifies all third-party CI/CD actions used in your Organization without pinned SHA-commits (Protect your CI/CD workflows from supply-chain attacks) creates a analytics-friendly report (CSV, JSON, Syslog) that can be passed to a SIEM system. In addition, Scharf also provides an automatic SHA-commit recommendation for a given thrid-party action with version.
 
-In addition, Scharf also provides an automatic SHA-commit recommendation for a given thrid-party action with version.
+## Installation
 
-Install Scharf binary easily on Linux or Mac OS via gobinaries.com:
+Install Scharf binary easily on Linux or Mac OS:
 
 ```sh
 curl -sf https://raw.githubusercontent.com/cybrota/scharf/refs/heads/main/install.sh | sh
 ```
 
-and generate a CSV report of your Git workspace, where root is workspace folder that stores all GitHub repositories:
+## Getting Started
+Scharf comes with one simple command to scan all Git repositories(branches, tags) stored in a workspace directory.
+
+Clone all your organization GitHub repositories to a directory and point it to --root.
+
+```sh
+scharf run --root=/path/to/workspace --out=json
+```
+
+To export results to CSV for analysis:
 
 ```sh
 scharf run --root=/path/to/workspace --out=csv
@@ -69,10 +78,3 @@ Use Scharf to pro-actively avoid supply chain attacks which can exfiltrate sensi
 * **Customizable Scanning**: Specify organization and project filters to fine-tune your security audits.
 * **Actionable Reports**: Generates detailed CSv & JSON reports that help you quickly identify and remediate insecure references.
 * **Easy Integration**: Integrate Scharf into your CI/CD pipelines for continuous security validation of workflow files.
-
-
-## Getting Started
-TBD
-
-### Installing Scharf
-TBD
