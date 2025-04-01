@@ -55,8 +55,8 @@ func WriteToCSV(inv *Inventory) {
 
 func main() {
 
-	var cmdRun = &cobra.Command{
-		Use:   "run",
+	var cmdFind = &cobra.Command{
+		Use:   "find",
 		Short: "Launches scharf with provided options for workspace root and output format",
 		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `Launches scharf with provided options for workspace root and output format`),
 		Args:  cobra.MinimumNArgs(0),
@@ -92,10 +92,30 @@ func main() {
 		},
 	}
 
-	cmdRun.PersistentFlags().String("root", ".", "Absolute path of root directory of GitHub repositories")
-	cmdRun.PersistentFlags().String("out", "json", "Output format of findings. Available options: json, csv")
+	var cmdLookup = &cobra.Command{
+		Use:   "lookup",
+		Short: "Look up the immutable commit-SHA of a given action & version string. Ex: actions/checkout@v4",
+		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `Look up the immutable commit-SHA of a given action & version string. Ex: actions/checkout@v4`),
+		Args:  cobra.MinimumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if args[0] != "" {
+				s := SHAResolver{}
+				sha, err := s.resolve(args[0])
+				if err != nil {
+					slog.Error("problem while fetching action SHA:", "error", err.Error())
+				}
+
+				fmt.Println(sha)
+			} else {
+				slog.Error("Please give a GitHub action to look up SHA-commit. Ex: actions/checkout@v4")
+			}
+		},
+	}
+
+	cmdFind.PersistentFlags().String("root", ".", "Absolute path of root directory of GitHub repositories")
+	cmdFind.PersistentFlags().String("out", "json", "Output format of findings. Available options: json, csv")
 
 	var rootCmd = &cobra.Command{Use: "scharf", Long: asciiLogo}
-	rootCmd.AddCommand(cmdRun)
+	rootCmd.AddCommand(cmdLookup, cmdFind)
 	rootCmd.Execute()
 }
