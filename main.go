@@ -57,8 +57,8 @@ func main() {
 
 	var cmdRun = &cobra.Command{
 		Use:   "run",
-		Short: "Launches recaller UI for search & documentation",
-		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `Run command opens Recaller UI with search from history`),
+		Short: "Launches scharf with provided options for workspace root and output format",
+		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `Launches scharf with provided options for workspace root and output format`),
 		Args:  cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
 			sc := Scanner{
