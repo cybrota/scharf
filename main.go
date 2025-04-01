@@ -102,7 +102,7 @@ func main() {
 				s := SHAResolver{}
 				sha, err := s.resolve(args[0])
 				if err != nil {
-					slog.Error("problem while fetching action SHA:", "error", err.Error())
+					slog.Error("problem while fetching action SHA. Please check the action again.", "action", args[0])
 				}
 
 				fmt.Println(sha)

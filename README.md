@@ -30,19 +30,33 @@ curl -sf https://raw.githubusercontent.com/cybrota/scharf/refs/heads/main/instal
 ```
 
 ## Getting Started
-Scharf comes with one simple command to scan all Git repositories(branches, tags) stored in a workspace directory.
+Scharf comes with two simple commands:
+1. find
+2. lookup
 
-Clone all your organization GitHub repositories to a directory and point it to --root.
+Clone all your organization GitHub repositories to a directory (Ex: workspace).
+
+1. Find all actions (branches, tags) with mutable third-party action refereces.
 
 ```sh
-scharf run --root=/path/to/workspace --out=json
+scharf find --root=/path/to/workspace --out=json
 ```
 
 To export results to CSV for analysis:
 
 ```sh
-scharf run --root=/path/to/workspace --out=csv
+scharf find --root /path/to/workspace --out csv
 ```
+
+2. Quickly lookup SHA for a given public, third-party GitHub action.
+```sh
+scharf lookup actions/checkout@v4 // 11bd71901bbe5b1630ceea73d27597364c9af683
+
+scharf lookup actions/setup-java@main // 3b6c050358614dd082e53cdbc55580431fc4e437
+
+scharf lookup hashicorp/setup-terraform // 852ca175a624bfb8d1f41b0dbcf92b3556fbc25f, pins main branch as default
+```
+
 
 ## Why Scharf?
 
@@ -72,9 +86,6 @@ Use Scharf to pro-actively avoid supply chain attacks which can exfiltrate sensi
 
 ## Key Features of Scharf
 
-* **Repository Discovery**: Automatically scan all repositories in a given GitHub organization.
 * **Workflow Analysis**: Parse GitHub CI/CD workflows to identify usage of third-party actions.
-* **Security Flags**: Detect and flag actions that reference versions via tags or branches instead of immutable SHA commits.
-* **Customizable Scanning**: Specify organization and project filters to fine-tune your security audits.
 * **Actionable Reports**: Generates detailed CSv & JSON reports that help you quickly identify and remediate insecure references.
-* **Easy Integration**: Integrate Scharf into your CI/CD pipelines for continuous security validation of workflow files.
+* **Easy SHA Lookup**: Fetch up-to-date SHA of a GitHub action to fix workflows found with mutable references.
