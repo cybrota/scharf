@@ -25,7 +25,7 @@ func (s *Scanner) ScanRepos(root string, dirPath string, regex *regexp.Regexp) (
 	var inventory Inventory
 	absolutePath, err := filepath.Abs(root)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("filepath: %w", err)
 	}
 
 	// Retrieve repositories from the VCS.
@@ -106,7 +106,7 @@ func (g GitHubVCS) ListRepositories(root string) ([]Repository, error) {
 
 	if err != nil {
 		logger.Error("failed to read root directory", "err", err)
-		return nil, err
+		return nil, fmt.Errorf("os: %w", err)
 	}
 
 	var rs []Repository
@@ -143,7 +143,7 @@ func (g GitRepository) ListBranches() ([]string, error) {
 func (g GitRepository) ListFiles(loc string) ([]string, error) {
 	entries, err := os.ReadDir(loc)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("os: %w", err)
 	}
 
 	var files []string
@@ -157,7 +157,7 @@ func (g GitRepository) ListFiles(loc string) ([]string, error) {
 func (g GitRepository) ReadFile(filePath string) ([]byte, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("os: %w", err)
 	}
 
 	return content, nil
