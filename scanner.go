@@ -69,7 +69,7 @@ func (s *Scanner) ScanRepos(root string, dirPath string, regex *regexp.Regexp) (
 				}
 
 				if len(matches) > 0 {
-					inventory.Records = append(inventory.Records, InventoryRecord{
+					inventory.Records = append(inventory.Records, &InventoryRecord{
 						Repository: repo.Name(),
 						Branch:     branch,
 						FilePath:   fPath,
@@ -112,7 +112,7 @@ func (g GitHubVCS) ListRepositories(root string) ([]Repository, error) {
 	var rs []Repository
 	for _, repo := range repos {
 		if shouldIncludeDir(repo.Name()) {
-			rs = append(rs, GitRepository{
+			rs = append(rs, &GitRepository{
 				name:      repo.Name(),
 				localPath: fmt.Sprintf("%s/%s", root, repo.Name()),
 			})
@@ -218,5 +218,5 @@ type InventoryRecord struct {
 
 // Inventory aggregates multiple inventory records.
 type Inventory struct {
-	Records []InventoryRecord `json:"findings"`
+	Records []*InventoryRecord `json:"findings"`
 }
