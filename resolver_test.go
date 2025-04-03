@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -307,5 +309,95 @@ func TestSHAResolver_resolve_InvalidJSON(t *testing.T) {
 		if err == nil {
 			t.Errorf("Expected error when JSON decoding fails, got nil")
 		}
+	})
+}
+
+// --- Tests for GetRefList ---
+func TestGetRefList(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		// Prepare the expected list of BranchOrTag objects.
+		expectedRefs := []BranchOrTag{
+			{
+				Name: "v1.0.0",
+				Commit: Commit{
+					Sha: "sha-1",
+					URL: "https://example.com/commit/sha-1",
+				},
+			},
+			{
+				Name: "v2.0.0",
+				Commit: Commit{
+					Sha: "sha-2",
+					URL: "https://example.com/commit/sha-2",
+				},
+			},
+		}
+		// Marshal the expected data into JSON.
+		b, err := json.Marshal(expectedRefs)
+		if err != nil {
+			t.Fatalf("failed to marshal expectedRefs: %v", err)
+		}
+
+		// Create a custom transport that returns the expected JSON.
+		customTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			// Verify that the URL is constructed as expected.
+			expectedURL := "https://api.github.com/repos/owner/repo/tags"
+			if req.URL.String() != expectedURL {
+				t.Errorf("unexpected URL: got %q, want %q", req.URL.String(), expectedURL)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewReader(b)),
+				Header:     make(http.Header),
+			}, nil
+		})
+
+		// Use the custom transport to override http.DefaultClient.Transport.
+		withHTTPClientTransport(customTransport, func() {
+			refs, err := GetRefList("owner/repo")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(refs, expectedRefs) {
+				t.Errorf("GetRefList() = %v; want %v", refs, expectedRefs)
+			}
+		})
+	})
+
+	t.Run("http error", func(t *testing.T) {
+		// Create a custom transport that simulates an HTTP error.
+		customTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return nil, errors.New("simulated http error")
+		})
+		withHTTPClientTransport(customTransport, func() {
+			_, err := GetRefList("owner/repo")
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), "simulated http error") {
+				t.Errorf("unexpected error message: %v", err)
+			}
+		})
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		// Create a custom transport that returns invalid JSON.
+		customTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			invalidJSON := []byte("invalid json")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewReader(invalidJSON)),
+				Header:     make(http.Header),
+			}, nil
+		})
+		withHTTPClientTransport(customTransport, func() {
+			_, err := GetRefList("owner/repo")
+			if err == nil {
+				t.Fatal("expected error due to invalid JSON, got nil")
+			}
+			if !strings.Contains(err.Error(), "json:") {
+				t.Errorf("unexpected error message: %v", err)
+			}
+		})
 	})
 }
