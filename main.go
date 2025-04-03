@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 
+	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
 
@@ -54,6 +55,16 @@ func WriteToCSV(inv *Inventory) {
 }
 
 func main() {
+	// list table configuration
+	tw := tablewriter.NewWriter(os.Stdout)
+	tw.SetHeader([]string{
+		"Version",
+		"Commit SHA",
+	})
+	tw.SetHeaderColor(
+		tablewriter.Colors{tablewriter.Bold, tablewriter.FgGreenColor},
+		tablewriter.Colors{tablewriter.Bold, tablewriter.FgGreenColor},
+	)
 
 	var cmdFind = &cobra.Command{
 		Use:   "find",
@@ -94,7 +105,7 @@ func main() {
 
 	var cmdLookup = &cobra.Command{
 		Use:   "lookup",
-		Short: "Look up the immutable commit-SHA of a given action & version string. Ex: actions/checkout@v4",
+		Short: "Look up the immutable commit-SHA of a given GitHub 'action@version'. Ex: actions/checkout@v4",
 		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `Look up the immutable commit-SHA of a given action & version string. Ex: actions/checkout@v4`),
 		Args:  cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
@@ -111,11 +122,36 @@ func main() {
 			}
 		},
 	}
-
 	cmdFind.PersistentFlags().String("root", ".", "Absolute path of root directory of GitHub repositories")
 	cmdFind.PersistentFlags().String("out", "json", "Output format of findings. Available options: json, csv")
 
+	var cmdList = &cobra.Command{
+		Use:   "list",
+		Short: "Lists all tags and their SHA versions of a GitHub action. Ex: actions/checkout",
+		Long:  "Lists all tags and their SHA versions of an action in tabular form. Ex: actions/checkout. Prints <Version | Commit SHA> as a table rows",
+		Args:  cobra.MinimumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if args[0] != "" {
+				list, err := GetRefList(args[0])
+				if err != nil {
+					slog.Error("No tags found. Please check the action again.", "action", args[0])
+				}
+
+				for i := range list {
+					tw.Append([]string{
+						list[i].Name,
+						list[i].Commit.Sha,
+					})
+				}
+
+				tw.Render()
+			} else {
+				slog.Error("Please give a GitHub action to look up SHA-commit. Ex: actions/checkout@v4")
+			}
+		},
+	}
+
 	var rootCmd = &cobra.Command{Use: "scharf", Long: asciiLogo}
-	rootCmd.AddCommand(cmdLookup, cmdFind)
+	rootCmd.AddCommand(cmdLookup, cmdFind, cmdList)
 	rootCmd.Execute()
 }

@@ -64,6 +64,23 @@ func makeAPIEndpoint(action string, version string) string {
 	return lookupURL
 }
 
+// GetRefList takes an action and returns a list of matching tags
+func GetRefList(action string) ([]BranchOrTag, error) {
+	lookupURL := fmt.Sprintf("%s/%s/tags", apiURL, action)
+	resp, err := http.Get(lookupURL)
+	if err != nil {
+		return []BranchOrTag{}, fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var b []BranchOrTag
+	if err := json.NewDecoder(resp.Body).Decode(&b); err != nil {
+		return []BranchOrTag{}, fmt.Errorf("json: %w", err)
+	}
+
+	return b, nil
+}
+
 // SHAResolver resolves a given action to it's safe SHA commit
 type SHAResolver struct{}
 
