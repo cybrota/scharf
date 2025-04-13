@@ -204,3 +204,63 @@ func TestCheckoutGitBranch(t *testing.T) {
 		})
 	}
 }
+
+// Test for GetCurrentBranch function expecting master.
+func TestGetCurrentBranch(t *testing.T) {
+	t.Run("valid git repo (master expected)", func(t *testing.T) {
+		// createTestRepo will create additional branches but end with HEAD on "master"
+		repoPath, cleanup := createTestRepo(t, []string{"dev"})
+		defer cleanup()
+
+		branch, err := GetCurrentBranch(repoPath)
+		if err != nil {
+			t.Fatalf("GetCurrentBranch() error = %v", err)
+		}
+
+		// We expect the head to be on "master" since the helper returns to master.
+		expected := plumbing.NewBranchReferenceName("master").String()
+		if branch != expected {
+			t.Errorf("GetCurrentBranch() = %s, want %s", branch, expected)
+		}
+	})
+
+	t.Run("invalid git repo", func(t *testing.T) {
+		// Create a temporary non-git directory.
+		tmpDir, err := os.MkdirTemp("", "nogitrepo")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		_, err = GetCurrentBranch(tmpDir)
+		if err == nil {
+			t.Fatalf("expected an error for non-git repo, but got nil")
+		}
+	})
+}
+
+// Test for IsGitRepo function.
+func TestIsGitRepo(t *testing.T) {
+	t.Run("valid git repo", func(t *testing.T) {
+		// createTestRepo initializes a proper Git repository.
+		repoPath, cleanup := createTestRepo(t, []string{"dev"})
+		defer cleanup()
+
+		if !IsGitRepo(repoPath) {
+			t.Errorf("IsGitRepo() returned false, want true for a valid git repo")
+		}
+	})
+
+	t.Run("invalid git repo", func(t *testing.T) {
+		// Create a temporary directory that isn't a Git repository.
+		tmpDir, err := os.MkdirTemp("", "nogitrepo")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		if IsGitRepo(tmpDir) {
+			t.Errorf("IsGitRepo() returned true, want false for a non-git repo")
+		}
+	})
+}

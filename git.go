@@ -60,3 +60,28 @@ func CheckoutGitBranch(repoPath, branchName string) error {
 
 	return nil
 }
+
+// GetCurrentBranch returns the head ref of a Git Repository
+func GetCurrentBranch(path string) (string, error) {
+	repo, err := git.PlainOpen(path)
+	if err != nil {
+		return "", err
+	}
+
+	head, err := repo.Head()
+	if err != nil {
+		return "", err
+	}
+
+	return head.Name().String(), nil
+}
+
+// IsGitRepo detects if a given repository is Git initialized
+func IsGitRepo(path string) bool {
+	_, err := git.PlainOpen(path)
+	if err != nil {
+		return false
+	}
+
+	return true
+}

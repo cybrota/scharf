@@ -17,6 +17,8 @@ const asciiLogo = `
 _______ _______ _     _ _______  ______ _______
 |______ |       |_____| |_____| |_____/ |______
 ______| |_____  |     | |     | |    \_ |
+
+Copyright @ Cybrota (https://github.com/cybrota)
 `
 
 func writeToJSON(inv *Inventory) {
@@ -29,7 +31,7 @@ func writeToJSON(inv *Inventory) {
 
 func WriteToCSV(inv *Inventory) {
 	writeRows := [][]string{
-		[]string{
+		{
 			"repository_name",
 			"branch_name",
 			"actions_file",
@@ -57,19 +59,11 @@ func WriteToCSV(inv *Inventory) {
 func main() {
 	// list table configuration
 	tw := tablewriter.NewWriter(os.Stdout)
-	tw.SetHeader([]string{
-		"Version",
-		"Commit SHA",
-	})
-	tw.SetHeaderColor(
-		tablewriter.Colors{tablewriter.Bold, tablewriter.FgGreenColor},
-		tablewriter.Colors{tablewriter.Bold, tablewriter.FgGreenColor},
-	)
 
 	var cmdFind = &cobra.Command{
 		Use:   "find",
-		Short: "Launches scharf with provided options for workspace root and output format",
-		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `Launches scharf with provided options for workspace root and output format`),
+		Short: "Find all GitHub actions with mutable references in a workspace. The workspace should have cloned Git repositories.",
+		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `Find all GitHub actions with mutable references in a workspace. The workspace should have cloned Git repositories.`),
 		Args:  cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
 			sc := Scanner{
@@ -131,6 +125,15 @@ func main() {
 		Long:  "Lists all tags and their SHA versions of an action in tabular form. Ex: actions/checkout. Prints <Version | Commit SHA> as a table rows",
 		Args:  cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
+			tw.SetHeader([]string{
+				"Version",
+				"Commit SHA",
+			})
+			tw.SetHeaderColor(
+				tablewriter.Colors{tablewriter.Bold, tablewriter.FgGreenColor},
+				tablewriter.Colors{tablewriter.Bold, tablewriter.FgGreenColor},
+			)
+
 			if args[0] != "" {
 				list, err := GetRefList(args[0])
 				if err != nil {
@@ -151,7 +154,63 @@ func main() {
 		},
 	}
 
+	var cmdAudit = &cobra.Command{
+		Use:   "audit",
+		Short: "Audit a given Git repository to identify actions with mutable references. Must run from a Git repository",
+		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `Audit the actions and raise error if any mutable references found. Good used with Ci/CD pipelines.`),
+		Args:  cobra.MinimumNArgs(0),
+		Run: func(cmd *cobra.Command, args []string) {
+			regex, _ := regexp.Compile(`(\w*-?\w*)(\/)(\w+-?\w+)@((v\w+)|main|dev|master)`)
+			inv, err := AuditRepository(regex)
+
+			if err != nil {
+				fmt.Println("Not a git repository. Skipping checks!")
+				return
+			}
+
+			if len(inv.Records) > 0 {
+				tw.SetHeader([]string{
+					"Match",
+					"FilePath",
+					"Replace with SHA",
+				})
+				tw.SetHeaderColor(
+					tablewriter.Colors{tablewriter.Bold, tablewriter.FgRedColor},
+					tablewriter.Colors{tablewriter.Bold, tablewriter.FgRedColor},
+					tablewriter.Colors{tablewriter.Bold, tablewriter.FgGreenColor},
+				)
+
+				s := SHAResolver{}
+				for _, ir := range inv.Records {
+					for _, mat := range ir.Matches {
+						sha, err := s.resolve(mat)
+						if err != nil {
+							sha = "N/A"
+						}
+
+						tw.Append([]string{
+							mat,
+							ir.FilePath,
+							sha,
+						})
+					}
+				}
+				fmt.Println("Mutable references found in your GitHub actions. Please replace them to secure your CI from supply chain attacks.")
+				tw.Render()
+				shouldRaise := cmd.Flag("raise-error")
+				if shouldRaise.Value.String() == "true" {
+					os.Exit(1)
+				}
+
+			} else {
+				fmt.Println("No mutable references found. Good job!")
+			}
+
+		},
+	}
+	cmdAudit.PersistentFlags().Bool("raise-error", false, "Raise error on any matches. Useful for interrupting CI pipelines")
+
 	var rootCmd = &cobra.Command{Use: "scharf", Long: asciiLogo}
-	rootCmd.AddCommand(cmdLookup, cmdFind, cmdList)
+	rootCmd.AddCommand(cmdLookup, cmdFind, cmdList, cmdAudit)
 	rootCmd.Execute()
 }
