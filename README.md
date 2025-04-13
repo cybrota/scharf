@@ -21,6 +21,12 @@ Prevent supply-chain attacks for your third-party GitHub actions!
 
 Scharf identifies all third-party CI/CD actions used in your Organization without pinned SHA-commits (Protect your CI/CD workflows from supply-chain attacks) creates a analytics-friendly report (CSV, JSON, Syslog) that can be passed to a SIEM system. In addition, Scharf also provides a quick way to inspect third-party actions by listing available tags and associated commit SHA.
 
+## Why Scharf?
+
+Scharf is a CLI tool to detect third-party GitHub actions with mutable references.
+
+Scharf helps you maintain a secure development lifecycle by ensuring that all third-party actions are pinned to a specific commit SHA. This approach minimizes risks associated with dependency drifting and unintentional code modifications.
+
 ## Installation
 
 Install Scharf binary easily on Linux or Mac OS:
@@ -30,10 +36,30 @@ curl -sf https://raw.githubusercontent.com/cybrota/scharf/refs/heads/main/instal
 ```
 
 ## Getting Started
-Scharf comes with below commands to assist hardening of GitHub third-party actions.
+Scharf comes with two types of commands to assist hardening of GitHub third-party actions.
 
-1. Find all actions (branches, tags) with mutable third-party action refereces. For that, clone all your organization GitHub repositories to a directory (Ex: workspace), and run:
+1. Discovery Commands (audit, find)
+2. Remediation Commands(lookup, list)
 
+### Audit: Quickly check if your Git repository has any mutable references using `audit` command. This is useful for single repository
+Ex:
+```sh
+sharf audit
+```
+Sample output:
+
+```ascii
+Mutable references found in your GitHub actions. Please replace them to secure your CI from supply chain attacks.
++---------------------+-------------------------------------------------------+------------------------------------------+
+|        MATCH        |                       FILEPATH                        |             REPLACE WITH SHA             |
++---------------------+-------------------------------------------------------+------------------------------------------+
+| actions/checkout@v4 | /Users/narenyellavula/scharf/.github/workflows/ci.yml | 11bd71901bbe5b1630ceea73d27597364c9af683 |
++---------------------+-------------------------------------------------------+------------------------------------------+
+```
+
+### Find:  Audit across multiple Git repositories and export matches to a file. For example, clone all your organization GitHub repositories to a directory (Ex: workspace), and run:
+This operation includes all branches in GitHub repositories.
+Ex:
 ```sh
 scharf find --root=/path/to/workspace --out=json
 ```
@@ -44,7 +70,8 @@ To export results to CSV for analysis:
 scharf find --root /path/to/workspace --out csv
 ```
 
-2. Once you idenitfy the gaps, quickly lookup SHA for a third-party GitHub action.
+### Lookup: Qickly lookup SHA for a third-party GitHub action. Must include version
+Ex:
 ```sh
 scharf lookup actions/checkout@v4 // 11bd71901bbe5b1630ceea73d27597364c9af683
 
@@ -53,7 +80,8 @@ scharf lookup actions/setup-java@main // 3b6c050358614dd082e53cdbc55580431fc4e43
 scharf lookup hashicorp/setup-terraform // 852ca175a624bfb8d1f41b0dbcf92b3556fbc25f, pins main branch as default
 ```
 
-3. If you are unsure about a version, list all tags and Commit SHA of a given action (without version)
+### List: If you are unsure about a version, list all tags and Commit SHA of a given action (without version)
+Ex:
 ```sh
 scharf list tj-actions/changed-files
 ```
@@ -94,12 +122,6 @@ scharf list tj-actions/changed-files
 | v44.0.0 | 2d756ea4c53f7f6b397767d8723b3a10a9f35bf2 |
 +---------+------------------------------------------+
 ```
-
-## Why Scharf?
-
-Scharf is a CLI tool to detect third-party GitHub actions with mutable references.
-
-Scharf helps you maintain a secure development lifecycle by ensuring that all third-party actions are pinned to a specific commit SHA. This approach minimizes risks associated with dependency drifting and unintentional code modifications.
 
 ## Why mutable tags in GitHub CI/CD workflows are bad ?
 
