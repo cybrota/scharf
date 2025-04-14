@@ -123,6 +123,27 @@ scharf list tj-actions/changed-files
 +---------+------------------------------------------+
 ```
 
+## Use Scharf in GitHub Actions to audit workflows
+
+Check the custom repository for adding Scharf as a third-party action auditor.
+
+[https://github.com/cybrota/scharf-action](https://github.com/cybrota/scharf-action)
+
+```yaml
+jobs:
+  my-job:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Audit GitHub actions
+        uses: cybrota/scharf-action@c0d0eb13ca383e5a3ec947d754f61c9e61fab5ba
+        with:
+          raise-error: true
+```
+
 ## Why mutable tags in GitHub CI/CD workflows are bad ?
 
 Using mutable references like tag-based or branch-based references in your CI/CD workflows can lead to unexpected changes or potential security vulnerabilities if the referenced action is compromised by malicious actors.
