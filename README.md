@@ -44,7 +44,7 @@ Scharf comes with two types of commands to assist hardening of GitHub third-part
 ### Audit: Quickly check if your Git repository has any mutable references using `audit` command. This is useful for single repository
 Ex:
 ```sh
-sharf audit
+scharf audit
 ```
 Sample output:
 
