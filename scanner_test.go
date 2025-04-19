@@ -184,7 +184,7 @@ func TestScanner_ScanRepos(t *testing.T) {
 	}
 }
 
-// TestScanner_ScanRepos tests the ScanRepos method by wiring in fake VCS and repository implementations.
+// TestScanner_ScanReposDefaultBranch tests the ScanRepos but with passing --head-only flag value to true
 func TestScanner_ScanReposDefaultBranch(t *testing.T) {
 	// Use a dummy root; the function will convert it to an absolute path.
 	root := "dummyRoot"
