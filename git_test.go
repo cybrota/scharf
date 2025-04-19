@@ -30,7 +30,7 @@ func CheckIfError(err error) {
 //
 // "branches" is a list of branch names (excluding "master" which is always there by default).
 // This helper also makes a single commit on each new branch (just enough so they exist).
-func createTestRepo(t *testing.T, branches []string) (string, func()) {
+func createTestRepo(t *testing.T, branches, tags []string) (string, func()) {
 	t.Helper()
 
 	// Create a temporary directory
@@ -99,6 +99,16 @@ func createTestRepo(t *testing.T, branches []string) (string, func()) {
 		}
 	}
 
+	// Create tags
+	for _, tag := range tags {
+		refName := plumbing.NewTagReferenceName(tag)
+		tag := plumbing.NewHashReference(refName, plumbing.ZeroHash)
+		err = repo.Storer.SetReference(tag)
+		if err != nil {
+			t.Fatalf("failed to create tag %s: %v", tag, err)
+		}
+	}
+
 	// Return to master
 	masterRef := plumbing.NewBranchReferenceName("master")
 	err = w.Checkout(&git.CheckoutOptions{Branch: masterRef})
@@ -133,7 +143,7 @@ func TestListGitBranches(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
-			repoPath, cleanup := createTestRepo(t, tt.branchesToMake)
+			repoPath, cleanup := createTestRepo(t, tt.branchesToMake, []string{})
 			defer cleanup()
 
 			got, err := ListGitBranches(repoPath)
@@ -145,6 +155,47 @@ func TestListGitBranches(t *testing.T) {
 				if !found {
 					t.Errorf("Expected branch %q to be in list, but it was not.\nGot branches: %v", branch, got)
 				}
+			}
+		})
+	}
+}
+
+func TestListTags(t *testing.T) {
+	tests := []struct {
+		name         string
+		tagsToMake   []string
+		expectedTags []string
+	}{
+		{
+			name:         "list tags in repository with multiple tags",
+			tagsToMake:   []string{"tag1", "tag2", "tag3"},
+			expectedTags: []string{"tag1", "tag2", "tag3"},
+		},
+		{
+			name:         "list tags in repository with no tags",
+			tagsToMake:   []string{},
+			expectedTags: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt // capture range variable
+		t.Run(tt.name, func(t *testing.T) {
+			repoPath, cleanup := createTestRepo(t, []string{}, tt.tagsToMake)
+			defer cleanup()
+
+			repo, err := git.PlainOpen(repoPath)
+			if err != nil {
+				t.Fatalf("failed to open repository: %v", err)
+			}
+
+			tags, err := ListTags(repo)
+			if err != nil {
+				t.Fatalf("error listing tags: %v", err)
+			}
+			// Check if the retrieved tags match the expected tags
+			if !reflect.DeepEqual(tags, tt.expectedTags) {
+				t.Errorf("got tags %v, want %v", tags, tt.expectedTags)
 			}
 		})
 	}
@@ -174,7 +225,7 @@ func TestCheckoutGitBranch(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
-			repoPath, cleanup := createTestRepo(t, tt.branchesToMake)
+			repoPath, cleanup := createTestRepo(t, tt.branchesToMake, []string{})
 			defer cleanup()
 
 			err := CheckoutGitBranch(repoPath, tt.checkoutBranch)
@@ -209,7 +260,7 @@ func TestCheckoutGitBranch(t *testing.T) {
 func TestGetCurrentBranch(t *testing.T) {
 	t.Run("valid git repo (master expected)", func(t *testing.T) {
 		// createTestRepo will create additional branches but end with HEAD on "master"
-		repoPath, cleanup := createTestRepo(t, []string{"dev"})
+		repoPath, cleanup := createTestRepo(t, []string{"dev"}, []string{})
 		defer cleanup()
 
 		branch, err := GetCurrentBranch(repoPath)
@@ -243,7 +294,7 @@ func TestGetCurrentBranch(t *testing.T) {
 func TestIsGitRepo(t *testing.T) {
 	t.Run("valid git repo", func(t *testing.T) {
 		// createTestRepo initializes a proper Git repository.
-		repoPath, cleanup := createTestRepo(t, []string{"dev"})
+		repoPath, cleanup := createTestRepo(t, []string{"dev"}, []string{})
 		defer cleanup()
 
 		if !IsGitRepo(repoPath) {

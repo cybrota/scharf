@@ -27,6 +27,12 @@ Scharf is a CLI tool to detect third-party GitHub actions with mutable reference
 
 Scharf helps you maintain a secure development lifecycle by ensuring that all third-party actions are pinned to a specific commit SHA. This approach minimizes risks associated with dependency drifting and unintentional code modifications.
 
+## Key Features of Scharf
+
+* **Workflow Analysis**: Parse GitHub CI/CD workflows to identify usage of third-party actions.
+* **Actionable Reports**: Generates detailed  JSON & CSV reports to help you quickly identify and remediate insecure references.
+* **Easy SHA Lookup**: Fetch up-to-date SHA of a GitHub action to fix workflows found with mutable references.
+
 ## Installation
 
 Install Scharf binary easily on Linux or Mac OS:
@@ -40,6 +46,10 @@ Scharf comes with two types of commands to assist hardening of GitHub third-part
 
 1. Discovery Commands (audit, find)
 2. Remediation Commands(lookup, list)
+
+<hr />
+
+## Discovery Commands
 
 ### Audit: Quickly check if your Git repository has any mutable references using `audit` command. This is useful for single repository
 Ex:
@@ -57,19 +67,28 @@ Mutable references found in your GitHub actions. Please replace them to secure y
 +---------------------+-------------------------------------------------------+------------------------------------------+
 ```
 
-### Find:  Audit across multiple Git repositories and export matches to a file. For example, clone all your organization GitHub repositories to a directory (Ex: workspace), and run:
-This operation includes all branches in GitHub repositories.
-Ex:
+### Find:  Scan across multiple Git repositories and export results to a file. For example, clone all your organization GitHub repositories to a directory (Ex: workspace), and run:
+
+This operation can include all branches in GitHub repositories (default). All branches excludes tags.
+
+Ex Scan all branches:
 ```sh
-scharf find --root=/path/to/workspace --out=json
+scharf find --root=/path/to/workspace
 ```
 
-To export results to CSV for analysis:
+This exports results to JSON. To export results to CSV, pass `--out csv` flag:
 
 ```sh
 scharf find --root /path/to/workspace --out csv
 ```
 
+Ex Only scan currently set HEAD in workspace repositories
+```sh
+scharf find --root=/path/to/workspace --head-only
+```
+<hr />
+
+## Remediation Commands
 ### Lookup: Qickly lookup SHA for a third-party GitHub action. Must include version
 Ex:
 ```sh
@@ -143,7 +162,7 @@ jobs:
         with:
           raise-error: true
 ```
-
+<hr />
 ## Why mutable tags in GitHub CI/CD workflows are bad ?
 
 Using mutable references like tag-based or branch-based references in your CI/CD workflows can lead to unexpected changes or potential security vulnerabilities if the referenced action is compromised by malicious actors.
@@ -160,12 +179,3 @@ Scharf lets you identify and mitigate against supply-chain attacks similar to "t
 * https://alexwlchan.net/2025/github-actions-audit/
 
 * https://github.com/advisories/ghsa-mrrh-fwg8-r2c3
-
-
-Use Scharf to pro-actively avoid supply chain attacks which can exfiltrate sensitive data from CI/CD workflows and cause reputation damage.
-
-## Key Features of Scharf
-
-* **Workflow Analysis**: Parse GitHub CI/CD workflows to identify usage of third-party actions.
-* **Actionable Reports**: Generates detailed CSv & JSON reports that help you quickly identify and remediate insecure references.
-* **Easy SHA Lookup**: Fetch up-to-date SHA of a GitHub action to fix workflows found with mutable references.
