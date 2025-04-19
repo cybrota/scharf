@@ -2,10 +2,26 @@ package main
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 )
+
+func ListTags(repo *git.Repository) ([]string, error) {
+	var tags []string
+	tagIter, err := repo.Tags()
+
+	if err != nil {
+		return nil, fmt.Errorf("git error: %w", err)
+	}
+	tagIter.ForEach(func(ref *plumbing.Reference) error {
+		tags = append(tags, ref.Name().Short())
+		return nil
+	})
+
+	return tags, nil
+}
 
 // ListGitBranches opens the Git repository located at repoPath
 // and returns a slice of branch names found in the repository.
@@ -23,9 +39,16 @@ func ListGitBranches(repoPath string) ([]string, error) {
 	}
 
 	var branchNames []string
+	tags, err := ListTags(repo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve tags: %w", err)
+	}
+
 	// Iterate over each branch reference and add the short name to our list
 	err = branches.ForEach(func(ref *plumbing.Reference) error {
-		branchNames = append(branchNames, ref.Name().Short())
+		if !slices.Contains(tags, ref.Name().Short()) {
+			branchNames = append(branchNames, ref.Name().Short())
+		}
 		return nil
 	})
 	if err != nil {

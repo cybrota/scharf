@@ -18,7 +18,7 @@ _______ _______ _     _ _______  ______ _______
 |______ |       |_____| |_____| |_____/ |______
 ______| |_____  |     | |     | |    \_ |
 
-Copyright @ Cybrota (https://github.com/cybrota)
+Software Copyright @ Cybrota (https://github.com/cybrota)
 `
 
 func writeToJSON(inv *Inventory) {
@@ -72,10 +72,17 @@ func main() {
 			}
 
 			root_path_flag := cmd.Flag("root")
+			var ho bool
+			head_only := cmd.Flag("head-only")
+			if head_only.Value.String() == "true" {
+				ho = true
+			} else {
+				ho = false
+			}
 
 			// Regex to find whether workflow has reference to vXY, main, dev or master
 			regex, _ := regexp.Compile(`(\w*-?\w*)(\/)(\w+-?\w+)@((v\w+)|main|dev|master)`)
-			inv, err := sc.ScanRepos(root_path_flag.Value.String(), ".github/workflows", regex)
+			inv, err := sc.ScanRepos(root_path_flag.Value.String(), regex, ho)
 
 			if err != nil {
 				log.Fatal(err.Error())
@@ -118,6 +125,7 @@ func main() {
 	}
 	cmdFind.PersistentFlags().String("root", ".", "Absolute path of root directory of GitHub repositories")
 	cmdFind.PersistentFlags().String("out", "json", "Output format of findings. Available options: json, csv")
+	cmdFind.PersistentFlags().Bool("head-only", false, "Limit scan only to HEAD (Activated branch)")
 
 	var cmdList = &cobra.Command{
 		Use:   "list",
