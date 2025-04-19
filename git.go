@@ -8,6 +8,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 )
 
+// ListTags lists all tags available for a given repository
 func ListTags(repo *git.Repository) ([]string, error) {
 	var tags []string
 	tagIter, err := repo.Tags()
