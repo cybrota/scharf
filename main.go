@@ -181,18 +181,25 @@ func main() {
 				)
 
 				s := SHAResolver{}
+				visited := map[string]bool{}
+
 				for _, ir := range inv.Records {
 					for _, mat := range ir.Matches {
+						hashKey := mat + ir.FilePath
+						if visited[hashKey] {
+							// already reported, skip to next
+							continue
+						}
 						sha, err := s.resolve(mat)
 						if err != nil {
 							sha = "N/A"
 						}
-
 						tw.Append([]string{
 							mat,
 							ir.FilePath,
 							sha,
 						})
+						visited[hashKey] = true
 					}
 				}
 				fmt.Println("Mutable references found in your GitHub actions. Please replace them to secure your CI from supply chain attacks.")
