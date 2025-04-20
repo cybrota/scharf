@@ -3,14 +3,14 @@
 
 <picture width="500">
   <source
-    width="600"
+    width="100%"
     media="(prefers-color-scheme: dark)"
-    src="https://github.com/cybrota/sharfer/blob/main/scharf-logo-d.png"
+    src="https://github.com/cybrota/sharfer/blob/main/logo.png"
     alt="Scarfer logo (dark)"
   />
   <img
-    width="600"
-    src="https://github.com/cybrota/sharfer/blob/main/scharf-logo-l.png"
+    width="100%"
+    src="https://github.com/cybrota/sharfer/blob/main/logo.png"
     alt="Sharfer logo (light)"
   />
 </picture>
