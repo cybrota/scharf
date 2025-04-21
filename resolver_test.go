@@ -252,7 +252,7 @@ func TestSHAResolver_resolve(t *testing.T) {
 			},
 		}
 
-		resolver := SHAResolver{}
+		resolver := NewSHAResolver()
 
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
