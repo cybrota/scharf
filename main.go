@@ -18,7 +18,9 @@ _______ _______ _     _ _______  ______ _______
 |______ |       |_____| |_____| |_____/ |______
 ______| |_____  |     | |     | |    \_ |
 
-Software Copyright @ Cybrota (https://github.com/cybrota)
+Prevent supply-chain attacks from your third-party GitHub actions!
+
+Software copyright @ Cybrota - https://github.com/cybrota
 `
 
 func writeToJSON(inv *Inventory) {
@@ -59,11 +61,12 @@ func WriteToCSV(inv *Inventory) {
 func main() {
 	// list table configuration
 	tw := tablewriter.NewWriter(os.Stdout)
+	regex := regexp.MustCompile(`(\w*-?\w*)(\/)(\w+-?\w+)@((v\w+)|main|dev|master)`)
 
 	var cmdFind = &cobra.Command{
 		Use:   "find",
-		Short: "Find all GitHub actions with mutable references in a workspace. The workspace should have cloned Git repositories.",
-		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `Find all GitHub actions with mutable references in a workspace. The workspace should have cloned Git repositories.`),
+		Short: "🔎 Find all GitHub actions with mutable references in a workspace. Should clone your Git repositories into the workspace",
+		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🔎 Find all GitHub actions with mutable references in a workspace. Should clone your Git repositories into the workspace`),
 		Args:  cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
 			sc := Scanner{
@@ -79,9 +82,6 @@ func main() {
 			} else {
 				ho = false
 			}
-
-			// Regex to find whether workflow has reference to vXY, main, dev or master
-			regex, _ := regexp.Compile(`(\w*-?\w*)(\/)(\w+-?\w+)@((v\w+)|main|dev|master)`)
 			inv, err := sc.ScanRepos(root_path_flag.Value.String(), regex, ho)
 
 			if err != nil {
@@ -106,8 +106,8 @@ func main() {
 
 	var cmdLookup = &cobra.Command{
 		Use:   "lookup",
-		Short: "Look up the immutable commit-SHA of a given GitHub 'action@version'. Ex: actions/checkout@v4",
-		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `Look up the immutable commit-SHA of a given action & version string. Ex: actions/checkout@v4`),
+		Short: "👀 Look up the immutable commit-SHA of a given third-party GitHub action plus reference. Ex: scharf lookup actions/checkout@v4",
+		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `👀 Look up the immutable commit-SHA of a given third-party GitHub action plus reference. Ex: scharf lookup actions/checkout@v4`),
 		Args:  cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			if args[0] != "" {
@@ -129,8 +129,8 @@ func main() {
 
 	var cmdList = &cobra.Command{
 		Use:   "list",
-		Short: "Lists all tags and their SHA versions of a GitHub action. Ex: actions/checkout",
-		Long:  "Lists all tags and their SHA versions of an action in tabular form. Ex: actions/checkout. Prints <Version | Commit SHA> as a table rows",
+		Short: "📋 Lists available references and their SHA versions of a GitHub action. Ex: scharf list actions/checkout",
+		Long:  "📋 Lists available references and their SHA versions of an action in tabular form. Ex: actions/checkout. Prints <Version | Commit SHA> as a table rows",
 		Args:  cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			tw.SetHeader([]string{
@@ -164,13 +164,11 @@ func main() {
 
 	var cmdAudit = &cobra.Command{
 		Use:   "audit",
-		Short: "Audit a given Git repository to identify actions with mutable references. Must run from a Git repository",
-		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `Audit the actions and raise error if any mutable references found. Good used with Ci/CD pipelines.`),
+		Short: "🥽 Audit a given Git repository to identify vulnerable actions with mutable references. Must run from a Git repository",
+		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🥽 Audit the actions and raise error if any mutable references found. Good used with Ci/CD pipelines.`),
 		Args:  cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
-			regex, _ := regexp.Compile(`(\w*-?\w*)(\/)(\w+-?\w+)@((v\w+)|main|dev|master)`)
 			inv, err := AuditRepository(regex)
-
 			if err != nil {
 				fmt.Println("Not a git repository. Skipping checks!")
 				return
@@ -188,7 +186,7 @@ func main() {
 					tablewriter.Colors{tablewriter.Bold, tablewriter.FgGreenColor},
 				)
 
-				s := SHAResolver{}
+				s := NewSHAResolver()
 				visited := map[string]bool{}
 
 				for _, ir := range inv.Records {
@@ -220,12 +218,24 @@ func main() {
 			} else {
 				fmt.Println("No mutable references found. Good job!")
 			}
-
 		},
 	}
 	cmdAudit.PersistentFlags().Bool("raise-error", false, "Raise error on any matches. Useful for interrupting CI pipelines")
 
+	var cmdAutoFix = &cobra.Command{
+		Use:   "autofix",
+		Short: "🪄 Auto-fixes vulnerable third-party GitHub actions with mutable references. Must run from a Git repository",
+		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🪄 Auto-fixes vulnerable third-party GitHub actions with mutable references. Must run from a Git repository`),
+		Args:  cobra.MinimumNArgs(0),
+		Run: func(cmd *cobra.Command, args []string) {
+			err := AutoFixRepository(regex)
+			if err != nil {
+				fmt.Println("Not a git repository. Skipping checks!")
+				return
+			}
+		},
+	}
 	var rootCmd = &cobra.Command{Use: "scharf", Long: asciiLogo}
-	rootCmd.AddCommand(cmdLookup, cmdFind, cmdList, cmdAudit)
+	rootCmd.AddCommand(cmdLookup, cmdFind, cmdList, cmdAudit, cmdAutoFix)
 	rootCmd.Execute()
 }

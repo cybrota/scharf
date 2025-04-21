@@ -16,7 +16,7 @@
 </picture>
 
 
-Prevent supply-chain attacks for your third-party GitHub actions!
+Prevent supply-chain attacks from your third-party GitHub actions!
 
 
 Scharf identifies all third-party CI/CD actions used in your Organization without pinned SHA-commits (Protect your CI/CD workflows from supply-chain attacks) creates a analytics-friendly report (CSV, JSON, Syslog) that can be passed to a SIEM system. In addition, Scharf also provides a quick way to inspect third-party actions by listing available tags and associated commit SHA.
@@ -33,9 +33,19 @@ Scharf helps you maintain a secure development lifecycle by ensuring that all th
 * **Actionable Reports**: Generates detailed  JSON & CSV reports to help you quickly identify and remediate insecure references.
 * **Easy SHA Lookup**: Fetch up-to-date SHA of a GitHub action to fix workflows found with mutable references.
 
+## Supported Platforms
+1. Linux
+2. Mac OSX
+
 ## Installation
 
-Install Scharf binary easily on Linux or Mac OS:
+1. Download binary for your platform from release versions:
+
+https://github.com/cybrota/scharf/releases
+
+or
+
+2. Run below shell script (Requires `Curl`):
 
 ```sh
 curl -sf https://raw.githubusercontent.com/cybrota/scharf/refs/heads/main/install.sh | sh
@@ -89,6 +99,27 @@ scharf find --root=/path/to/workspace --head-only
 <hr />
 
 ## Remediation Commands
+### Autofix: Auto-fixes vulnerable third-party GitHub actions in a GitHub repository
+
+Navigate to a GitHub repository, and run:
+
+Ex:
+```sh
+scharf autofix
+```
+
+```ascii
+🪄 Fixing add-issue-header.yml:
+  'actions/github-script@v7' -> 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7' ✅
+🪄 Fixing build.yml:
+  'actions/checkout@v4' -> 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4' ✅
+  'actions/checkout@v4' -> 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4' ✅
+  'actions/setup-python@v5' -> 'actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55 # v5' ✅
+  'actions/cache@v4' -> 'actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4' ✅
+```
+
+`Note`: This command modifies file content which can be safely committed to Git.
+
 ### Lookup: Qickly lookup SHA for a third-party GitHub action. Must include version
 Ex:
 ```sh
@@ -163,6 +194,7 @@ jobs:
           raise-error: true
 ```
 <hr />
+
 ## Why mutable tags in GitHub CI/CD workflows are bad ?
 
 Using mutable references like tag-based or branch-based references in your CI/CD workflows can lead to unexpected changes or potential security vulnerabilities if the referenced action is compromised by malicious actors.

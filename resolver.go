@@ -82,7 +82,16 @@ func GetRefList(action string) ([]BranchOrTag, error) {
 }
 
 // SHAResolver resolves a given action to it's safe SHA commit
-type SHAResolver struct{}
+type SHAResolver struct {
+	cache map[string]string
+}
+
+func NewSHAResolver() Resolver {
+	cache := make(map[string]string)
+	return &SHAResolver{
+		cache: cache,
+	}
+}
 
 type Commit struct {
 	Sha string `json:"sha"`
@@ -95,7 +104,12 @@ type BranchOrTag struct {
 }
 
 // resolve fetches list of tags for a given GitHub action and picks SHA commit
-func (s SHAResolver) resolve(action string) (string, error) {
+func (s *SHAResolver) resolve(action string) (string, error) {
+	// See if SHA can be found in cache
+	if s.cache[action] != "" {
+		return s.cache[action], nil
+	}
+
 	splits := splitRawAction(action)
 	actionBase := splits[0]
 	version := splits[1]
@@ -122,5 +136,7 @@ func (s SHAResolver) resolve(action string) (string, error) {
 		return "", errors.New(fmt.Sprintf("given version: %s is not found for action: %s", version, actionBase))
 	}
 
+	// Add SHA to cache for future calls.
+	s.cache[action] = sha
 	return sha, nil
 }

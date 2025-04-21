@@ -15,6 +15,7 @@ func AuditRepository(regex *regexp.Regexp) (*Inventory, error) {
 	}
 
 	var inventory Inventory
+
 	absPath, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("dir error: %w", err)
@@ -62,4 +63,73 @@ func AuditRepository(regex *regexp.Regexp) (*Inventory, error) {
 	}
 
 	return &inventory, nil
+}
+
+// AutoFixRepository tries to match and replace third-party action references with SHA
+// It uses SHA resolution to find accurate SHA
+func AutoFixRepository(regex *regexp.Regexp) error {
+	// Keep a cache for action SHA to avoid many network lookups
+	resolver := NewSHAResolver()
+
+	if !IsGitRepo(".") {
+		return fmt.Errorf("The current directory is not a Git repository")
+	}
+	absPath, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("dir error: %w", err)
+	}
+
+	paths := strings.Split(absPath, "/")
+	repo := &GitRepository{
+		localPath: absPath,
+		name:      paths[len(paths)-1],
+	}
+	workflowPath := fmt.Sprintf("%s/.github/workflows", absPath)
+
+	fileNames, err := repo.ListFiles(workflowPath)
+	if err != nil {
+		return fmt.Errorf("file error: %w", err)
+	}
+
+	for _, fileName := range fileNames {
+		fPath := fmt.Sprintf("%s/%s", workflowPath, fileName)
+		fContent, err := repo.ReadFile(fPath)
+		if err != nil {
+			return fmt.Errorf("file error: %w", err)
+		}
+
+		contentStr := string(fContent)
+		fMatches := regex.FindAllStringSubmatch(contentStr, 4)
+
+		if len(fMatches) > 0 {
+			fmt.Printf("🪄 Fixing %s: \n", fileName)
+			for _, finding := range fMatches {
+				// 5 elements created by regex match
+				// 0 - Action, 1 - Org, 2- Repo, 4 - Version or Branch
+				if len(finding) >= 5 {
+					action := finding[0]
+					sha, err := resolver.resolve(action)
+					if err != nil {
+						fmt.Printf(
+							"  '%s' -> Couldn't fix as reference: %s is not found on GitHub ⚠️\n", action, finding[4])
+						continue // Skip to next match
+					}
+
+					fixedAction := fmt.Sprintf("%s/%s@%s # %s", finding[1], finding[3], sha, finding[4])
+					fmt.Printf("  '%s' -> '%s' ✅\n", action, fixedAction)
+
+					subRegex := regexp.MustCompile(action)
+					contentStr = subRegex.ReplaceAllString(contentStr, fixedAction)
+				}
+			}
+
+			// Write back to workflow file with replaced SHA
+			err := os.WriteFile(fPath, []byte(contentStr), os.ModeAppend)
+			if err != nil {
+				logger.Error("Problem while fixing the action file", "file", fileName, "problem", err.Error())
+			}
+		}
+	}
+
+	return nil
 }
