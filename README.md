@@ -16,7 +16,7 @@
 </picture>
 
 
-Prevent supply-chain attacks for your third-party GitHub actions!
+Prevent supply-chain attacks from your third-party GitHub actions!
 
 
 Scharf identifies all third-party CI/CD actions used in your Organization without pinned SHA-commits (Protect your CI/CD workflows from supply-chain attacks) creates a analytics-friendly report (CSV, JSON, Syslog) that can be passed to a SIEM system. In addition, Scharf also provides a quick way to inspect third-party actions by listing available tags and associated commit SHA.
