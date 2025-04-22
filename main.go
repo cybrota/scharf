@@ -111,7 +111,7 @@ func main() {
 		Args:  cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			if args[0] != "" {
-				s := SHAResolver{}
+				s := NewSHAResolver()
 				sha, err := s.resolve(args[0])
 				if err != nil {
 					slog.Error("problem while fetching action SHA. Please check the action again.", "action", args[0])
@@ -230,7 +230,7 @@ func main() {
 		Run: func(cmd *cobra.Command, args []string) {
 			err := AutoFixRepository(regex)
 			if err != nil {
-				fmt.Println("Not a git repository. Skipping checks!")
+				fmt.Println("Not a git repository. Skipping autofix!")
 				return
 			}
 		},
