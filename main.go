@@ -230,7 +230,7 @@ func main() {
 		Run: func(cmd *cobra.Command, args []string) {
 			err := AutoFixRepository(regex)
 			if err != nil {
-				fmt.Println("Not a git repository. Skipping checks!")
+				fmt.Println("Not a git repository. Skipping autofix!")
 				return
 			}
 		},
