@@ -1,4 +1,12 @@
-package main
+// Copyright (c) 2025 Naren Yellavula & Cybrota contributors
+// Apache License, Version 2.0
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+
+// package network handles all GitHub API related network calls
+
+package network
 
 import (
 	"encoding/json"
@@ -12,8 +20,8 @@ const apiURL = "https://api.github.com/repos"
 
 // Resolver is a converter for action@version to a SHA string
 type Resolver interface {
-	// resolve checks if SHA is available for a given version of GitHub action
-	resolve(action string) (string, error)
+	// Resolve checks if SHA is available for a given version of GitHub action
+	Resolve(action string) (string, error)
 }
 
 // searchTag probes for a given version tag in list of tags and returns SHA commit
@@ -103,8 +111,8 @@ type BranchOrTag struct {
 	Commit Commit `json:"commit"`
 }
 
-// resolve fetches list of tags for a given GitHub action and picks SHA commit
-func (s *SHAResolver) resolve(action string) (string, error) {
+// Resolve fetches list of tags for a given GitHub action and picks SHA commit
+func (s *SHAResolver) Resolve(action string) (string, error) {
 	// See if SHA can be found in cache
 	if s.cache[action] != "" {
 		return s.cache[action], nil

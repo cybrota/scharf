@@ -1,4 +1,12 @@
-package main
+// Copyright (c) 2025 Naren Yellavula & Cybrota contributors
+// Apache License, Version 2.0
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+
+// package network handles all GitHub API related network calls
+
+package network
 
 import (
 	"bytes"
@@ -256,7 +264,7 @@ func TestSHAResolver_resolve(t *testing.T) {
 
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
-				sha, err := resolver.resolve(tc.inputAction)
+				sha, err := resolver.Resolve(tc.inputAction)
 				if tc.expectError {
 					if err == nil {
 						t.Errorf("Expected error for input %q, got nil", tc.inputAction)
@@ -283,7 +291,7 @@ func TestSHAResolver_resolve_HTTPError(t *testing.T) {
 
 	withHTTPClientTransport(customTransport, func() {
 		resolver := SHAResolver{}
-		_, err := resolver.resolve("owner/repo@v1.0.0")
+		_, err := resolver.Resolve("owner/repo@v1.0.0")
 		if err == nil {
 			t.Errorf("Expected error when HTTP GET fails, got nil")
 		}
@@ -305,7 +313,7 @@ func TestSHAResolver_resolve_InvalidJSON(t *testing.T) {
 
 	withHTTPClientTransport(customTransport, func() {
 		resolver := SHAResolver{}
-		_, err := resolver.resolve("owner/repo@v1.0.0")
+		_, err := resolver.Resolve("owner/repo@v1.0.0")
 		if err == nil {
 			t.Errorf("Expected error when JSON decoding fails, got nil")
 		}

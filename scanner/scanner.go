@@ -1,9 +1,17 @@
-package main
+// Copyright (c) 2025 Naren Yellavula & Cybrota contributors
+// Apache License, Version 2.0
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+
+package scanner
 
 import (
 	"fmt"
 	"os"
 	"regexp"
+
+	"github.com/cybrota/scharf/git"
 )
 
 // shouldIncludeDir returns false if the file should be ignored.
@@ -56,7 +64,7 @@ func (g GitRepository) Location() string {
 }
 
 func (g GitRepository) ListBranches() ([]string, error) {
-	return ListGitBranches(g.localPath)
+	return git.ListGitBranches(g.localPath)
 }
 
 func (g GitRepository) ListFiles(loc string) ([]string, error) {
@@ -83,7 +91,7 @@ func (g GitRepository) ReadFile(filePath string) ([]byte, error) {
 }
 
 func (g GitRepository) SwitchBranch(branchName string) error {
-	return CheckoutGitBranch(g.localPath, branchName)
+	return git.CheckoutGitBranch(g.localPath, branchName)
 }
 
 // GitHubWorkFlowScanner implements Scanner interface

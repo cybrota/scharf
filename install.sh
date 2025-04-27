@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 # This script installs scharf from the GitHub releases.
 # It detects the operating system and architecture, downloads the appropriate zip file,
-# extracts the binary, and moves it to a folder in your PATH.
+# extracts the binary, and moves it to a folder in your PATH: /usr/local/bin
 # Usage:
-#   curl -sf https://your.domain/install-scharf.sh | sh
+#   curl -sf https://raw.githubusercontent.com/cybrota/scharf/refs/heads/main/install.sh | sh
 
 set -e
 
