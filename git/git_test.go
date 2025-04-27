@@ -1,4 +1,12 @@
-package main
+// Copyright (c) 2025 Naren Yellavula & Cybrota contributors
+// Apache License, Version 2.0
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+
+// Package git is to perform all local Git operations required by application
+
+package git
 
 import (
 	"fmt"

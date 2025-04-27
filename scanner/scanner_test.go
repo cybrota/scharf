@@ -1,7 +1,14 @@
-package main
+// Copyright (c) 2025 Naren Yellavula & Cybrota contributors
+// Apache License, Version 2.0
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+
+package scanner
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,6 +21,16 @@ import (
 type fakeVCS struct {
 	repos        []Repository
 	listReposErr error
+}
+
+// CheckIfError should be used to naively panics if an error is not nil.
+func CheckIfError(err error) {
+	if err == nil {
+		return
+	}
+
+	fmt.Printf("\x1b[31;1m%s\x1b[0m\n", fmt.Sprintf("error: %s", err))
+	os.Exit(1)
 }
 
 func (f fakeVCS) ListRepositories(root string) ([]Repository, error) {

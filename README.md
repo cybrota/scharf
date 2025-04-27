@@ -19,23 +19,25 @@
 Prevent supply-chain attacks from your third-party GitHub actions!
 
 
-Scharf identifies all third-party CI/CD actions used in your Organization without pinned SHA-commits (Protect your CI/CD workflows from supply-chain attacks) creates a analytics-friendly report (CSV, JSON, Syslog) that can be passed to a SIEM system. In addition, Scharf also provides a quick way to inspect third-party actions by listing available tags and associated commit SHA.
+Scharf identifies & fixes all third-party CI/CD actions used in your Git repositories. It can also create an analytics-friendly report (CSV, JSON) about mutable tags across repositories. In addition, Scharf also provides a quick way to inspect third-party actions by listing available tags and associated commit SHA.
 
 ## Why Scharf?
 
-Scharf is a CLI tool to detect third-party GitHub actions with mutable references.
+Scharf is a CLI tool to detect and autofix third-party GitHub actions with mutable references.
 
-Scharf helps you maintain a secure development lifecycle by ensuring that all third-party actions are pinned to a specific commit SHA. This approach minimizes risks associated with dependency drifting and unintentional code modifications.
+Scharf helps you maintain a secure development lifecycle by ensuring that all third-party actions are pinned to a specific commit SHA. This approach minimizes risks associated with dependency drifting and unintentional code modifications to third-party GitHub actions.
 
 ## Key Features of Scharf
 
-* **Workflow Analysis**: Parse GitHub CI/CD workflows to identify usage of third-party actions.
-* **Actionable Reports**: Generates detailed  JSON & CSV reports to help you quickly identify and remediate insecure references.
-* **Easy SHA Lookup**: Fetch up-to-date SHA of a GitHub action to fix workflows found with mutable references.
+* **Autofix**: Identify & autofix mutable tags in workflows with GitHub third-party actions.
+* **Easy SHA Lookup**: Fetch up-to-date SHA/s of a GitHub action without leaving your terminal.
+* **Actionable Reports**: Generate detailed JSON & CSV reports to help you quickly identify and remediate insecure references. Works over multiple repositories.
+* **Customization**: Look up either in HEAD reference or all branches while generating actionable reports.
+
 
 ## Supported Platforms
-1. Linux
-2. Mac OSX
+1. Linux (available)
+2. Mac OSX (available)
 
 ## Installation
 
@@ -45,17 +47,39 @@ https://github.com/cybrota/scharf/releases
 
 or
 
-2. Run below shell script (Requires `Curl`):
+2. Easy install with below shell script (Requires `Curl` tool):
 
 ```sh
 curl -sf https://raw.githubusercontent.com/cybrota/scharf/refs/heads/main/install.sh | sh
 ```
 
-## Getting Started
+## Autofix: Auto-fixes vulnerable third-party GitHub actions in a GitHub repository
+
+Navigate to a locally-cloned GitHub repository, and run:
+
+Ex:
+```sh
+scharf autofix
+```
+
+```ascii
+🪄 Fixing add-issue-header.yml:
+  'actions/github-script@v7' -> 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7' ✅
+🪄 Fixing build.yml:
+  'actions/checkout@v4' -> 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4' ✅
+  'actions/checkout@v4' -> 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4' ✅
+  'actions/setup-python@v5' -> 'actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55 # v5' ✅
+  'actions/cache@v4' -> 'actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4' ✅
+```
+
+`Note`: This command may modify the file content which should be reviewed and committed to Git.
+
+## Getting Started with other commands
+
 Scharf comes with two types of commands to assist hardening of GitHub third-party actions.
 
 1. Discovery Commands (audit, find)
-2. Remediation Commands(lookup, list)
+2. Remediation Commands(list, lookup)
 
 <hr />
 
@@ -99,36 +123,6 @@ scharf find --root=/path/to/workspace --head-only
 <hr />
 
 ## Remediation Commands
-### Autofix: Auto-fixes vulnerable third-party GitHub actions in a GitHub repository
-
-Navigate to a GitHub repository, and run:
-
-Ex:
-```sh
-scharf autofix
-```
-
-```ascii
-🪄 Fixing add-issue-header.yml:
-  'actions/github-script@v7' -> 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7' ✅
-🪄 Fixing build.yml:
-  'actions/checkout@v4' -> 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4' ✅
-  'actions/checkout@v4' -> 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4' ✅
-  'actions/setup-python@v5' -> 'actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55 # v5' ✅
-  'actions/cache@v4' -> 'actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4' ✅
-```
-
-`Note`: This command modifies file content which can be safely committed to Git.
-
-### Lookup: Qickly lookup SHA for a third-party GitHub action. Must include version
-Ex:
-```sh
-scharf lookup actions/checkout@v4 // 11bd71901bbe5b1630ceea73d27597364c9af683
-
-scharf lookup actions/setup-java@main // 3b6c050358614dd082e53cdbc55580431fc4e437
-
-scharf lookup hashicorp/setup-terraform // 852ca175a624bfb8d1f41b0dbcf92b3556fbc25f, pins main branch as default
-```
 
 ### List: If you are unsure about a version, list all tags and Commit SHA of a given action (without version)
 Ex:
@@ -173,7 +167,18 @@ scharf list tj-actions/changed-files
 +---------+------------------------------------------+
 ```
 
-## Use Scharf in GitHub Actions to audit workflows
+### Lookup: If you already know the version, qickly lookup SHA for a third-party GitHub action
+
+Ex:
+```sh
+scharf lookup actions/checkout@v4 // 11bd71901bbe5b1630ceea73d27597364c9af683
+
+scharf lookup actions/setup-java@main // 3b6c050358614dd082e53cdbc55580431fc4e437
+
+scharf lookup hashicorp/setup-terraform // 852ca175a624bfb8d1f41b0dbcf92b3556fbc25f, pins main branch as default
+```
+
+## Integrating Scharf into GitHub Actions to continously audit workflows
 
 Check the custom repository for adding Scharf as a third-party action auditor.
 
@@ -206,8 +211,12 @@ Scharf lets you identify and mitigate against supply-chain attacks similar to "t
 "Github Actions is definitely a vector for abuse." - Another Hackernews Reader
 
 ## Further read:
-*  https://www.cisa.gov/news-events/alerts/2025/03/18/supply-chain-compromise-third-party-github-action-cve-2025-30066
 
-* https://alexwlchan.net/2025/github-actions-audit/
+Supply Chain Compromise of Third-Party tj-actions/changed-files:
+- https://www.cisa.gov/news-events/alerts/2025/03/18/supply-chain-compromise-third-party-github-action-cve-2025-30066
 
+Whose code am I running in GitHub Actions?
+- https://alexwlchan.net/2025/github-actions-audit/
+
+GItHub CVE: tj-actions changed-files through 45.0.7 allows remote attackers to discover secrets by reading actions logs
 * https://github.com/advisories/ghsa-mrrh-fwg8-r2c3
