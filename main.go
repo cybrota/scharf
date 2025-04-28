@@ -141,13 +141,22 @@ func main() {
 		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🪄 Auto-fixes vulnerable third-party GitHub actions with mutable references. Must run from a Git repository`),
 		Args:  cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
-			err := sc.AutoFixRepository(regex)
+			isDryRun := cmd.Flag("dry-run")
+			var isDR bool
+			if isDryRun.Value.String() == "true" {
+				isDR = true
+			} else {
+				isDR = false
+			}
+
+			err := sc.AutoFixRepository(regex, isDR)
 			if err != nil {
 				fmt.Println("Not a git repository. Skipping autofix!")
 				return
 			}
 		},
 	}
+	cmdAutoFix.PersistentFlags().Bool("dry-run", false, "Preview the fixes before actually making the changes")
 
 	var cmdFind = &cobra.Command{
 		Use:   "find",
