@@ -6,12 +6,12 @@
     width="100%"
     media="(prefers-color-scheme: dark)"
     src="https://github.com/cybrota/sharfer/blob/main/logo.png"
-    alt="Scarfer logo (dark)"
+    alt="Scharf logo (dark)"
   />
   <img
     width="100%"
     src="https://github.com/cybrota/sharfer/blob/main/logo.png"
-    alt="Sharfer logo (light)"
+    alt="Scharf logo (light)"
   />
 </picture>
 
@@ -73,6 +73,14 @@ scharf autofix
 ```
 
 `Note`: This command may modify the file content which should be reviewed and committed to Git.
+
+If you just want to preview (no destructive changes) before fixing, include`--dry-run` flag:
+
+```sh
+scharf autofix --dry-run
+```
+This is a safe way to test fixes before applying changes.
+
 
 ## Getting Started with other commands
 

@@ -79,9 +79,13 @@ func AuditRepository(regex *regexp.Regexp) (*Inventory, error) {
 
 // AutoFixRepository tries to match and replace third-party action references with SHA
 // It uses SHA resolution to find accurate SHA
-func AutoFixRepository(regex *regexp.Regexp) error {
+func AutoFixRepository(regex *regexp.Regexp, isDryRun bool) error {
 	// Keep a cache for action SHA to avoid many network lookups
 	resolver := network.NewSHAResolver()
+
+	if isDryRun {
+		fmt.Println("Running autofix in dryrun mode.")
+	}
 
 	if !git.IsGitRepo(".") {
 		return fmt.Errorf("The current directory is not a Git repository")
@@ -111,7 +115,9 @@ func AutoFixRepository(regex *regexp.Regexp) error {
 		}
 
 		contentStr := string(fContent)
-		fMatches := regex.FindAllStringSubmatch(contentStr, 4)
+
+		// -1: Match all
+		fMatches := regex.FindAllStringSubmatch(contentStr, -1)
 
 		if len(fMatches) > 0 {
 			fmt.Printf("🪄 Fixing %s: \n", fileName)
@@ -135,10 +141,14 @@ func AutoFixRepository(regex *regexp.Regexp) error {
 				}
 			}
 
-			// Write back to workflow file with replaced SHA
-			err := os.WriteFile(fPath, []byte(contentStr), os.ModeAppend)
-			if err != nil {
-				logger.Error("Problem while fixing the action file", "file", fileName, "problem", err.Error())
+			if !isDryRun {
+				// Write back to workflow file with replaced SHA
+				err = os.WriteFile(fPath, []byte(contentStr), os.ModeAppend)
+				if err != nil {
+					logger.Error("Problem while fixing the action file", "file", fileName, "problem", err.Error())
+				}
+			} else {
+				fmt.Println("The displayed fixes are not staged. Re-run the 'scharf autofix' and omit the flag '--dry-run' to apply fixes.")
 			}
 		}
 	}
