@@ -13,10 +13,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/cybrota/scharf/actcache"
 )
 
 const apiURL = "https://api.github.com/repos"
+
+var homedir, _ = os.UserHomeDir()
+var scharfDir = filepath.Join(homedir, ".scharf")
 
 // Resolver is a converter for action@version to a SHA string
 type Resolver interface {
@@ -96,6 +103,15 @@ type SHAResolver struct {
 
 func NewSHAResolver() Resolver {
 	cache := make(map[string]string)
+
+	// Fill resolver cache from cache file
+	c, err := actcache.GetCache(scharfDir)
+	if err == nil && len(c) > 0 {
+		for k, v := range c {
+			cache[k] = v.SHA
+		}
+	}
+
 	return &SHAResolver{
 		cache: cache,
 	}
@@ -113,7 +129,7 @@ type BranchOrTag struct {
 
 // Resolve fetches list of tags for a given GitHub action and picks SHA commit
 func (s *SHAResolver) Resolve(action string) (string, error) {
-	// See if SHA can be found in cache
+	// See if SHA can be found in resolver cache
 	if s.cache[action] != "" {
 		return s.cache[action], nil
 	}
@@ -144,7 +160,11 @@ func (s *SHAResolver) Resolve(action string) (string, error) {
 		return "", errors.New(fmt.Sprintf("given version: %s is not found for action: %s", version, actionBase))
 	}
 
-	// Add SHA to cache for future calls.
+	// Add SHA to resolver cache for repeated asks
 	s.cache[action] = sha
+
+	// Add SHA to cache file for future calls
+	actcache.UpdateCacheEntry(scharfDir, action, sha)
+
 	return sha, nil
 }
