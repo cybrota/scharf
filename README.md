@@ -74,6 +74,14 @@ scharf autofix
 
 `Note`: This command may modify the file content which should be reviewed and committed to Git.
 
+If you just want to preview (no destructive changes) before fixing, include`--dry-run` flag:
+
+```sh
+scharf autofix --dry-run
+```
+This is a safe way to test fixes before applying changes.
+
+
 ## Getting Started with other commands
 
 Scharf comes with two types of commands to assist hardening of GitHub third-party actions.
