@@ -115,7 +115,9 @@ func AutoFixRepository(regex *regexp.Regexp, isDryRun bool) error {
 		}
 
 		contentStr := string(fContent)
-		fMatches := regex.FindAllStringSubmatch(contentStr, 4)
+
+		// -1: Match all
+		fMatches := regex.FindAllStringSubmatch(contentStr, -1)
 
 		if len(fMatches) > 0 {
 			fmt.Printf("🪄 Fixing %s: \n", fileName)
