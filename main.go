@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"time"
 
 	"github.com/cybrota/scharf/logging"
 	nw "github.com/cybrota/scharf/network"
@@ -81,6 +82,7 @@ func main() {
 		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🥽 Audit the actions and raise error if any mutable references found. Good used with Ci/CD pipelines.`),
 		Args:  cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
+			then := time.Now()
 			inv, err := sc.AuditRepository(regex)
 			if err != nil {
 				fmt.Println("Not a git repository. Skipping checks!")
@@ -94,8 +96,8 @@ func main() {
 					"Replace with SHA",
 				})
 				tw.SetHeaderColor(
-					tablewriter.Colors{tablewriter.Bold, tablewriter.FgRedColor},
-					tablewriter.Colors{tablewriter.Bold, tablewriter.FgRedColor},
+					tablewriter.Colors{tablewriter.Bold, tablewriter.FgMagentaColor},
+					tablewriter.Colors{tablewriter.Bold, tablewriter.FgMagentaColor},
 					tablewriter.Colors{tablewriter.Bold, tablewriter.FgGreenColor},
 				)
 
@@ -127,7 +129,9 @@ func main() {
 				if shouldRaise.Value.String() == "true" {
 					os.Exit(1)
 				}
-
+				now := time.Now()
+				di := now.Sub(then)
+				fmt.Printf("Total time: %.2f s\n", di.Seconds())
 			} else {
 				fmt.Println("No mutable references found. Good job!")
 			}
@@ -148,12 +152,16 @@ func main() {
 			} else {
 				isDR = false
 			}
-
+			then := time.Now()
 			err := sc.AutoFixRepository(regex, isDR)
 			if err != nil {
+				fmt.Println(err.Error())
 				fmt.Println("Not a git repository. Skipping autofix!")
 				return
 			}
+			now := time.Now()
+			di := now.Sub(then)
+			fmt.Printf("Total time: %.2f s\n", di.Seconds())
 		},
 	}
 	cmdAutoFix.PersistentFlags().Bool("dry-run", false, "Preview the fixes before actually making the changes")
