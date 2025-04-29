@@ -7,10 +7,12 @@
 package scanner
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
+	"syscall"
 
 	"github.com/cybrota/scharf/git"
 	"github.com/cybrota/scharf/logging"
@@ -18,6 +20,19 @@ import (
 )
 
 var logger = logging.GetLogger(0)
+
+// Color codes
+const (
+	Reset   = "\033[0m"
+	Red     = "\033[31m"
+	Green   = "\033[32m"
+	Yellow  = "\033[33m"
+	Blue    = "\033[34m"
+	Magenta = "\033[35m"
+	Cyan    = "\033[36m"
+	Gray    = "\033[37m"
+	White   = "\033[97m"
+)
 
 // AuditRepository collects inventory details from current Git repository.
 func AuditRepository(regex *regexp.Regexp) (*Inventory, error) {
@@ -50,7 +65,11 @@ func AuditRepository(regex *regexp.Regexp) (*Inventory, error) {
 		fPath := fmt.Sprintf("%s/%s", workflowPath, fileName)
 		content, err := repo.ReadFile(fPath)
 		if err != nil {
-			return nil, fmt.Errorf("file error: %w", err)
+			if errors.Is(err, syscall.EISDIR) {
+				continue // This is an accidental directory. Move to the next file
+			} else {
+				return nil, fmt.Errorf("file error: %w", err)
+			}
 		}
 
 		found := regex.FindAll([]byte(content), -1)
@@ -109,9 +128,14 @@ func AutoFixRepository(regex *regexp.Regexp, isDryRun bool) error {
 
 	for _, fileName := range fileNames {
 		fPath := fmt.Sprintf("%s/%s", workflowPath, fileName)
+
 		fContent, err := repo.ReadFile(fPath)
 		if err != nil {
-			return fmt.Errorf("file error: %w", err)
+			if errors.Is(err, syscall.EISDIR) {
+				continue // This is an accidental directory. Move to the next file
+			} else {
+				return fmt.Errorf("file error: %w", err)
+			}
 		}
 
 		contentStr := string(fContent)
@@ -120,7 +144,7 @@ func AutoFixRepository(regex *regexp.Regexp, isDryRun bool) error {
 		fMatches := regex.FindAllStringSubmatch(contentStr, -1)
 
 		if len(fMatches) > 0 {
-			fmt.Printf("🪄 Fixing %s: \n", fileName)
+			fmt.Printf("🪄 Fixing %s%s%s: \n", Yellow, fileName, Reset)
 			for _, finding := range fMatches {
 				// 5 elements created by regex match
 				// 0 - Action, 1 - Org, 2- Repo, 4 - Version or Branch
@@ -128,8 +152,7 @@ func AutoFixRepository(regex *regexp.Regexp, isDryRun bool) error {
 					action := finding[0]
 					sha, err := resolver.Resolve(action)
 					if err != nil {
-						fmt.Printf(
-							"  '%s' -> Couldn't fix as reference: %s is not found on GitHub ⚠️\n", action, finding[4])
+						fmt.Printf("  '%s' -> %sCouldn't fix the reference: %s. Tag or branch not found on GitHub%s ⚠️\n", action, Magenta, finding[4], Reset)
 						continue // Skip to next match
 					}
 
@@ -147,11 +170,14 @@ func AutoFixRepository(regex *regexp.Regexp, isDryRun bool) error {
 				if err != nil {
 					logger.Error("Problem while fixing the action file", "file", fileName, "problem", err.Error())
 				}
-			} else {
-				fmt.Println("The displayed fixes are not staged. Re-run the 'scharf autofix' and omit the flag '--dry-run' to apply fixes.")
 			}
+			// Add padding
+			fmt.Println()
 		}
 	}
 
+	if isDryRun {
+		fmt.Println("The displayed fixes are not staged. Re-run 'scharf autofix' and omit the flag '--dry-run' to apply fixes.")
+	}
 	return nil
 }
