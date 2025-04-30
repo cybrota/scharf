@@ -19,7 +19,8 @@ type Scanner struct {
 	FileScanner FileScanner
 }
 
-func (s *Scanner) ScanBranch(branch string, repo Repository, regex *regexp.Regexp, dirPath string) *InventoryRecord {
+func (s *Scanner) ScanBranch(branch string, repo Repository, regex *regexp.Regexp, dirPath string) *Inventory {
+	var inventory Inventory
 	fileNames, err := repo.ListFiles(dirPath)
 	if err != nil {
 		// The directory might not exist on this branch; skip to next branch.
@@ -44,15 +45,17 @@ func (s *Scanner) ScanBranch(branch string, repo Repository, regex *regexp.Regex
 		}
 
 		if len(matches) > 0 {
-			return &InventoryRecord{
+			ir := &InventoryRecord{
 				Repository: repo.Name(),
 				Branch:     branch,
 				FilePath:   fPath,
 				Matches:    matches,
 			}
+
+			inventory.Records = append(inventory.Records, ir)
 		}
 	}
-	return nil
+	return &inventory
 }
 
 // ScanRepos traverses all repositories found under the root directory,
@@ -89,9 +92,9 @@ func (s *Scanner) ScanRepos(root string, regex *regexp.Regexp, ho bool) (*Invent
 		for _, branch := range branches {
 			searchPath := fmt.Sprintf("%s/%s/.github/workflows", absolutePath, repo.Name())
 			logger.Debug("Processing the repo:", "repo", repo.Name(), "branch", branch, "filepath", searchPath)
-			ir := s.ScanBranch(branch, repo, regex, searchPath)
-			if ir != nil {
-				inventory.Records = append(inventory.Records, ir)
+			inv := s.ScanBranch(branch, repo, regex, searchPath)
+			if inv != nil {
+				inventory.Records = append(inventory.Records, inv.Records...)
 			}
 		}
 	}
