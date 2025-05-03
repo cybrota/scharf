@@ -172,11 +172,6 @@ func main() {
 		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🔎 Find all GitHub actions with mutable references in a workspace. Should clone your Git repositories into the workspace`),
 		Args:  cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
-			sc := sc.Scanner{
-				VCS:         sc.GitHubVCS{},
-				FileScanner: sc.GitHubWorkFlowScanner{},
-			}
-
 			root_path_flag := cmd.Flag("root")
 			var ho bool
 			head_only := cmd.Flag("head-only")
@@ -185,8 +180,13 @@ func main() {
 			} else {
 				ho = false
 			}
-			inv, err := sc.ScanRepos(root_path_flag.Value.String(), regex, ho)
 
+			repos, err := sc.ListRepositoriesAtRoot(sc.FilePath(root_path_flag.Value.String()))
+			if err != nil {
+				log.Fatal(err.Error())
+			}
+
+			inv, err := sc.ScanRepos(repos, regex, ho)
 			if err != nil {
 				log.Fatal(err.Error())
 			}

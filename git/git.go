@@ -117,8 +117,3 @@ func IsGitRepo(path string) bool {
 
 	return true
 }
-
-// CloneRepo clones a given URL
-// func CloneRepo(path string) error {
-
-// }

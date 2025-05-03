@@ -17,12 +17,6 @@ import (
 
 // --- Dummy implementations for Testing ---
 
-// fakeVCS implements the VCS interface for testing.
-type fakeVCS struct {
-	repos        []Repository
-	listReposErr error
-}
-
 // CheckIfError should be used to naively panics if an error is not nil.
 func CheckIfError(err error) {
 	if err == nil {
@@ -31,13 +25,6 @@ func CheckIfError(err error) {
 
 	fmt.Printf("\x1b[31;1m%s\x1b[0m\n", fmt.Sprintf("error: %s", err))
 	os.Exit(1)
-}
-
-func (f fakeVCS) ListRepositories(root string) ([]Repository, error) {
-	if f.listReposErr != nil {
-		return nil, f.listReposErr
-	}
-	return f.repos, nil
 }
 
 // fakeRepository implements the Repository interface.
@@ -112,10 +99,9 @@ func TestShouldIncludeDir(t *testing.T) {
 
 // TestGitHubWorkFlowScanner_ScanContent checks that ScanContent returns the correct matches.
 func TestGitHubWorkFlowScanner_ScanContent(t *testing.T) {
-	scanner := GitHubWorkFlowScanner{}
 	regex := regexp.MustCompile("test")
 	content := []byte("this is a test string with test keyword")
-	matches, err := scanner.ScanContent(content, regex)
+	matches, err := ScanContent(content, regex)
 	CheckIfError(err)
 
 	expectedCount := 2
@@ -132,50 +118,10 @@ func TestScanner_ScanRepos(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get absolute path: %v", err)
 	}
-	dirPath := ".github/workflows"
-	// Prepare file names.
-	file1 := "file1.txt"
-	file2 := "file2.txt"
-	// Construct the expected full file paths.
-	file1Path := filepath.Join(absRoot, "repo1", dirPath, file1)
-	file2Path := filepath.Join(absRoot, "repo1", dirPath, file2)
-
-	// Fake repository "repo1" returns valid branches and files.
-	repo1 := fakeRepository{
-		name:     "repo1",
-		branches: []string{"main", "dev"},
-		files:    []string{file1, file2},
-		fileContents: map[string][]byte{
-			file1Path: []byte("this file contains a match"),
-			file2Path: []byte("no relevant content"),
-		},
-		readFileErrs: make(map[string]error),
-	}
-
-	// Fake repository "repoError" simulates an error when listing branches.
-	repoError := fakeRepository{
-		name:            "repoError",
-		listBranchesErr: errors.New("failed to list branches"),
-	}
-
-	// The fake VCS returns both repositories.
-	fakeVcs := fakeVCS{
-		repos: []Repository{repo1, repoError},
-	}
-
-	// Use the real GitHubWorkFlowScanner as the FileScanner.
-	fileScanner := GitHubWorkFlowScanner{}
-
-	// Construct the Scanner with the fake VCS and FileScanner.
-	scanner := Scanner{
-		VCS:         fakeVcs,
-		FileScanner: fileScanner,
-	}
-
 	// Use a regex that matches the word "match".
 	regex := regexp.MustCompile("match")
 
-	inventory, err := scanner.ScanRepos(root, regex, false)
+	inventory, err := ScanRepos(root, regex, false)
 	if err != nil {
 		t.Fatalf("ScanRepos returned error: %v", err)
 	}
@@ -239,20 +185,10 @@ func TestScanner_ScanReposDefaultBranch(t *testing.T) {
 	fakeVcs := fakeVCS{
 		repos: []Repository{repo1, repoError},
 	}
-
-	// Use the real GitHubWorkFlowScanner as the FileScanner.
-	fileScanner := GitHubWorkFlowScanner{}
-
-	// Construct the Scanner with the fake VCS and FileScanner.
-	scanner := Scanner{
-		VCS:         fakeVcs,
-		FileScanner: fileScanner,
-	}
-
 	// Use a regex that matches the word "match".
 	regex := regexp.MustCompile("match")
 
-	inventory, err := scanner.ScanRepos(root, regex, true)
+	inventory, err := ScanRepos(root, regex, true)
 	if err != nil {
 		t.Fatalf("ScanRepos returned error: %v", err)
 	}
