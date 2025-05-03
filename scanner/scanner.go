@@ -4,10 +4,13 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
+// package scanner handles find operations
+
 package scanner
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +20,8 @@ import (
 
 // Relative or Absolute path of a file
 type FilePath string
+
+var findRegex = regexp.MustCompile(`(\w*-?\w*)(\/)(\w+-?\w+)@((v\w+)|main|dev|master)`)
 
 // GitRepository implements Repository interface
 type GitRepository struct {
@@ -200,4 +205,18 @@ func ScanContent(content []byte, regex *regexp.Regexp) ([]string, error) {
 	}
 
 	return matches, nil
+}
+
+func Find(root string, headOnly bool) (*Inventory, error) {
+	repos, err := ListRepositoriesAtRoot(FilePath(root))
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
+	inv, err := ScanRepos(repos, findRegex, headOnly)
+	if err != nil {
+		return nil, err
+	}
+
+	return inv, nil
 }

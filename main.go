@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"regexp"
 	"time"
 
 	"github.com/cybrota/scharf/logging"
@@ -74,7 +73,6 @@ func WriteToCSV(inv *sc.Inventory) {
 func main() {
 	// list table configuration
 	tw := tablewriter.NewWriter(os.Stdout)
-	regex := regexp.MustCompile(`(\w*-?\w*)(\/)(\w+-?\w+)@((v\w+)|main|dev|master)`)
 
 	var cmdAudit = &cobra.Command{
 		Use:   "audit",
@@ -83,7 +81,7 @@ func main() {
 		Args:  cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
 			then := time.Now()
-			inv, err := sc.AuditRepository(regex)
+			inv, err := sc.AuditRepository()
 			if err != nil {
 				fmt.Println("Not a git repository. Skipping checks!")
 				return
@@ -153,7 +151,7 @@ func main() {
 				isDR = false
 			}
 			then := time.Now()
-			err := sc.AutoFixRepository(regex, isDR)
+			err := sc.AutoFixRepository(isDR)
 			if err != nil {
 				fmt.Println(err.Error())
 				fmt.Println("Not a git repository. Skipping autofix!")
@@ -181,12 +179,7 @@ func main() {
 				ho = false
 			}
 
-			repos, err := sc.ListRepositoriesAtRoot(sc.FilePath(root_path_flag.Value.String()))
-			if err != nil {
-				log.Fatal(err.Error())
-			}
-
-			inv, err := sc.ScanRepos(repos, regex, ho)
+			inv, err := sc.Find(root_path_flag.Value.String(), ho)
 			if err != nil {
 				log.Fatal(err.Error())
 			}

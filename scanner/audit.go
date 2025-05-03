@@ -36,7 +36,7 @@ const (
 )
 
 // AuditRepository collects inventory details from current Git repository.
-func AuditRepository(regex *regexp.Regexp) (*Inventory, error) {
+func AuditRepository() (*Inventory, error) {
 
 	if !git.IsGitRepo(".") {
 		return nil, fmt.Errorf("The current directory is not a Git repository")
@@ -68,7 +68,7 @@ func AuditRepository(regex *regexp.Regexp) (*Inventory, error) {
 			}
 		}
 
-		found := regex.FindAll([]byte(content), -1)
+		found := findRegex.FindAll([]byte(content), -1)
 		var matches []string
 		for _, match := range found {
 			matches = append(matches, string(match))
@@ -82,7 +82,7 @@ func AuditRepository(regex *regexp.Regexp) (*Inventory, error) {
 			inventory.Records = append(inventory.Records, &InventoryRecord{
 				Repository: paths[len(paths)-1],
 				Branch:     b,
-				FilePath:   absPath,
+				FilePath:   f,
 				Matches:    matches,
 			})
 		}
@@ -93,7 +93,7 @@ func AuditRepository(regex *regexp.Regexp) (*Inventory, error) {
 
 // AutoFixRepository tries to match and replace third-party action references with SHA
 // It uses SHA resolution to find accurate SHA
-func AutoFixRepository(regex *regexp.Regexp, isDryRun bool) error {
+func AutoFixRepository(isDryRun bool) error {
 	// Keep a cache for action SHA to avoid many network lookups
 	resolver := network.NewSHAResolver()
 
@@ -129,9 +129,9 @@ func AutoFixRepository(regex *regexp.Regexp, isDryRun bool) error {
 		contentStr := string(fContent)
 
 		// -1: Match all
-		fMatches := regex.FindAllStringSubmatch(contentStr, -1)
+		fMatches := findRegex.FindAllStringSubmatch(contentStr, -1)
 		if len(fMatches) > 0 {
-			fmt.Printf("🪄 Fixing %s%s%s: \n", Yellow, fileName, Reset)
+			fmt.Printf("🪄 Fixing %s%s%s: \n", Yellow, string(*fileName), Reset)
 			for _, finding := range fMatches {
 				// 5 elements created by regex match
 				// 0 - Action, 1 - Org, 2- Repo, 4 - Version or Branch
