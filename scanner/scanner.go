@@ -4,109 +4,37 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
+// package scanner handles find operations
+
 package scanner
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 
 	"github.com/cybrota/scharf/git"
 )
 
-// shouldIncludeDir returns false if the file should be ignored.
-func shouldIncludeDir(fileName string) bool {
-	// List files you want to exclude.
-	ignoredFiles := map[string]bool{
-		".DS_Store":    true,
-		".ruff_cache":  true,
-		".ropeproject": true,
-	}
-	return !ignoredFiles[fileName]
-}
+// Relative or Absolute path of a file
+type FilePath string
 
-// GitHub VCS
-type GitHubVCS struct{}
-
-func (g GitHubVCS) ListRepositories(root string) ([]Repository, error) {
-	repos, err := os.ReadDir(root)
-
-	if err != nil {
-		logger.Error("failed to read root directory", "err", err)
-		return nil, fmt.Errorf("os: %w", err)
-	}
-
-	var rs []Repository
-	for _, repo := range repos {
-		if shouldIncludeDir(repo.Name()) {
-			rs = append(rs, &GitRepository{
-				name:      repo.Name(),
-				localPath: fmt.Sprintf("%s/%s", root, repo.Name()),
-			})
-		}
-	}
-
-	return rs, nil
-}
+var findRegex = regexp.MustCompile(`(\w*-?\w*)(\/)(\w+-?\w+)@((v\w+)|main|dev|master)`)
 
 // GitRepository implements Repository interface
 type GitRepository struct {
-	name      string
-	localPath string
+	name    string
+	absPath FilePath
 }
 
 func (g GitRepository) Name() string {
 	return g.name
 }
 
-func (g GitRepository) Location() string {
-	return g.localPath
-}
-
-func (g GitRepository) ListBranches() ([]string, error) {
-	return git.ListGitBranches(g.localPath)
-}
-
-func (g GitRepository) ListFiles(loc string) ([]string, error) {
-	entries, err := os.ReadDir(loc)
-	if err != nil {
-		return nil, fmt.Errorf("os: %w", err)
-	}
-
-	var files []string
-	for _, entry := range entries {
-		logger.Debug("found file at location", "repo", entry.Name(), "loc", loc)
-		files = append(files, entry.Name())
-	}
-	return files, nil
-}
-
-func (g GitRepository) ReadFile(filePath string) ([]byte, error) {
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("os: %w", err)
-	}
-
-	return content, nil
-}
-
-func (g GitRepository) SwitchBranch(branchName string) error {
-	return git.CheckoutGitBranch(g.localPath, branchName)
-}
-
-// GitHubWorkFlowScanner implements Scanner interface
-type GitHubWorkFlowScanner struct{}
-
-// ScanContent finds matches in given content
-func (gws GitHubWorkFlowScanner) ScanContent(content []byte, regex *regexp.Regexp) ([]string, error) {
-	found := regex.FindAll([]byte(content), -1)
-
-	var matches []string
-	for _, match := range found {
-		matches = append(matches, string(match))
-	}
-
-	return matches, nil
+func (g GitRepository) ListBranches(fp FilePath) ([]string, error) {
+	return git.ListGitBranches(string(fp))
 }
 
 // InventoryRecord holds details for a regex match in a file.
@@ -120,4 +48,167 @@ type InventoryRecord struct {
 // Inventory aggregates multiple inventory records.
 type Inventory struct {
 	Records []*InventoryRecord `json:"findings"`
+}
+
+// ScanBranch scans a given branch for mutable references
+func ScanBranch(branch string, repo GitRepository, regex *regexp.Regexp, dirPath string) *Inventory {
+	var inventory Inventory
+	fileNames, err := ListFiles(FilePath(dirPath))
+	if err != nil {
+		// The directory might not exist on this branch; skip to next branch.
+		logger.Debug("directory might not exist on branch. skipping to next repo")
+		return nil
+	}
+
+	// Process each file found in the directory.
+	for _, fileName := range fileNames {
+		loc := filepath.Join(dirPath, string(*fileName))
+		content, err := ReadFile(FilePath(loc))
+		if err != nil {
+			// Log error and skip this file.
+			logger.Debug("workflow directory might not exist. skipping to next repo")
+			continue
+		}
+
+		matches, err := ScanContent(content, regex)
+		if err != nil {
+			// Log error and skip this file.
+			continue
+		}
+
+		if len(matches) > 0 {
+			ir := &InventoryRecord{
+				Repository: repo.Name(),
+				Branch:     branch,
+				FilePath:   loc,
+				Matches:    matches,
+			}
+
+			inventory.Records = append(inventory.Records, ir)
+		}
+	}
+	return &inventory
+}
+
+// ScanRepos traverses all repositories found under the root directory,
+// checks each branch, enumerates over files in the given workflow directory path,
+// and scans each file's content for regex matches.
+// ho - HEAD only
+func ScanRepos(repos []*GitRepository, regex *regexp.Regexp, ho bool) (*Inventory, error) {
+	var inventory Inventory
+
+	// Process each repository.
+	for _, repo := range repos {
+		branches, err := repo.ListBranches(repo.absPath)
+		if err != nil {
+			// Log error and continue with next repository.
+			logger.Debug("couldn't detect branches. skipping to next repo")
+			continue
+		}
+
+		if ho {
+			branches = []string{"HEAD"}
+		}
+
+		// For each branch, enumerate files in the specified directory.
+		for _, branch := range branches {
+			searchPath := filepath.Join(string(repo.absPath), ".github", "workflows")
+			logger.Debug("Processing the repo:", "repo", repo.Name(), "branch", branch, "filepath", searchPath)
+			inv := ScanBranch(branch, *repo, regex, searchPath)
+			if inv != nil {
+				inventory.Records = append(inventory.Records, inv.Records...)
+			}
+		}
+	}
+
+	return &inventory, nil
+}
+
+// shouldIncludeDir returns false if the file should be ignored.
+func shouldIncludeDir(fileName string) bool {
+	// List files you want to exclude.
+	ignoredFiles := map[string]bool{
+		".DS_Store":    true,
+		".ruff_cache":  true,
+		".ropeproject": true,
+	}
+	return !ignoredFiles[fileName]
+}
+
+func ListRepositoriesAtRoot(root FilePath) ([]*GitRepository, error) {
+	repos, err := os.ReadDir(string(root))
+
+	if err != nil {
+		logger.Error("failed to read root directory", "err", err)
+		return nil, fmt.Errorf("os: %w", err)
+	}
+
+	var rs []*GitRepository
+	for _, repo := range repos {
+		abs, err := filepath.Abs(filepath.Join(string(root), repo.Name()))
+		if err != nil {
+			logger.Error("failed to find absolute path", "err", err)
+			return nil, fmt.Errorf("os: %w", err)
+		}
+
+		if shouldIncludeDir(repo.Name()) {
+			rs = append(rs, &GitRepository{
+				name:    repo.Name(),
+				absPath: FilePath(abs),
+			})
+		}
+	}
+
+	return rs, nil
+}
+
+func ListFiles(loc FilePath) ([]*FilePath, error) {
+	entries, err := os.ReadDir(string(loc))
+	if err != nil {
+		return nil, fmt.Errorf("os: %w", err)
+	}
+
+	var files []*FilePath
+	for _, entry := range entries {
+		logger.Debug("found file at location", "repo", entry.Name(), "loc", loc)
+		fp := FilePath(entry.Name())
+		files = append(files, &fp)
+	}
+	return files, nil
+}
+
+// ReadFile reads content of file in a given filepath
+func ReadFile(loc FilePath) ([]byte, error) {
+	content, err := os.ReadFile(string(loc))
+	if err != nil {
+		return nil, fmt.Errorf("os: %w", err)
+	}
+
+	return content, nil
+}
+
+// ScanContent finds matches in given content
+func ScanContent(content []byte, regex *regexp.Regexp) ([]string, error) {
+	found := regex.FindAll([]byte(content), -1)
+
+	var matches []string
+	for _, match := range found {
+		matches = append(matches, string(match))
+	}
+
+	return matches, nil
+}
+
+func Find(root string, headOnly bool) (*Inventory, error) {
+	repos, err := ListRepositoriesAtRoot(FilePath(root))
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
+	inv, err := ScanRepos(repos, findRegex, headOnly)
+	if err != nil {
+		return nil, err
+	}
+
+	return inv, nil
 }

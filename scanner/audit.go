@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
@@ -35,13 +36,11 @@ const (
 )
 
 // AuditRepository collects inventory details from current Git repository.
-func AuditRepository(regex *regexp.Regexp) (*Inventory, error) {
+func AuditRepository() (*Inventory, error) {
 
 	if !git.IsGitRepo(".") {
 		return nil, fmt.Errorf("The current directory is not a Git repository")
 	}
-
-	var inventory Inventory
 
 	absPath, err := os.Getwd()
 	if err != nil {
@@ -49,21 +48,18 @@ func AuditRepository(regex *regexp.Regexp) (*Inventory, error) {
 	}
 
 	paths := strings.Split(absPath, "/")
-	repo := &GitRepository{
-		localPath: absPath,
-		name:      paths[len(paths)-1],
-	}
-	workflowPath := fmt.Sprintf("%s/.github/workflows", absPath)
+	loc := filepath.Join(absPath, ".github", "workflows")
 
-	fileNames, err := repo.ListFiles(workflowPath)
+	fileNames, err := ListFiles(FilePath(loc))
 	if err != nil {
 		return nil, fmt.Errorf("file error: %w", err)
 	}
 
+	var inventory Inventory
 	// Process each file found in the directory.
 	for _, fileName := range fileNames {
-		fPath := fmt.Sprintf("%s/%s", workflowPath, fileName)
-		content, err := repo.ReadFile(fPath)
+		f := filepath.Join(loc, string(*fileName))
+		content, err := ReadFile(FilePath(f))
 		if err != nil {
 			if errors.Is(err, syscall.EISDIR) {
 				continue // This is an accidental directory. Move to the next file
@@ -72,7 +68,7 @@ func AuditRepository(regex *regexp.Regexp) (*Inventory, error) {
 			}
 		}
 
-		found := regex.FindAll([]byte(content), -1)
+		found := findRegex.FindAll([]byte(content), -1)
 		var matches []string
 		for _, match := range found {
 			matches = append(matches, string(match))
@@ -82,12 +78,11 @@ func AuditRepository(regex *regexp.Regexp) (*Inventory, error) {
 		if err != nil {
 			return nil, fmt.Errorf("git error: %w", err)
 		}
-
 		if len(matches) > 0 {
 			inventory.Records = append(inventory.Records, &InventoryRecord{
-				Repository: repo.Name(),
+				Repository: paths[len(paths)-1],
 				Branch:     b,
-				FilePath:   fPath,
+				FilePath:   f,
 				Matches:    matches,
 			})
 		}
@@ -98,7 +93,7 @@ func AuditRepository(regex *regexp.Regexp) (*Inventory, error) {
 
 // AutoFixRepository tries to match and replace third-party action references with SHA
 // It uses SHA resolution to find accurate SHA
-func AutoFixRepository(regex *regexp.Regexp, isDryRun bool) error {
+func AutoFixRepository(isDryRun bool) error {
 	// Keep a cache for action SHA to avoid many network lookups
 	resolver := network.NewSHAResolver()
 
@@ -114,22 +109,15 @@ func AutoFixRepository(regex *regexp.Regexp, isDryRun bool) error {
 		return fmt.Errorf("dir error: %w", err)
 	}
 
-	paths := strings.Split(absPath, "/")
-	repo := &GitRepository{
-		localPath: absPath,
-		name:      paths[len(paths)-1],
-	}
-	workflowPath := fmt.Sprintf("%s/.github/workflows", absPath)
-
-	fileNames, err := repo.ListFiles(workflowPath)
+	workFlowDir := filepath.Join(absPath, ".github", "workflows")
+	fileNames, err := ListFiles(FilePath(workFlowDir))
 	if err != nil {
 		return fmt.Errorf("file error: %w", err)
 	}
 
 	for _, fileName := range fileNames {
-		fPath := fmt.Sprintf("%s/%s", workflowPath, fileName)
-
-		fContent, err := repo.ReadFile(fPath)
+		loc := filepath.Join(workFlowDir, string(*fileName))
+		fContent, err := ReadFile(FilePath(loc))
 		if err != nil {
 			if errors.Is(err, syscall.EISDIR) {
 				continue // This is an accidental directory. Move to the next file
@@ -141,10 +129,9 @@ func AutoFixRepository(regex *regexp.Regexp, isDryRun bool) error {
 		contentStr := string(fContent)
 
 		// -1: Match all
-		fMatches := regex.FindAllStringSubmatch(contentStr, -1)
-
+		fMatches := findRegex.FindAllStringSubmatch(contentStr, -1)
 		if len(fMatches) > 0 {
-			fmt.Printf("🪄 Fixing %s%s%s: \n", Yellow, fileName, Reset)
+			fmt.Printf("🪄 Fixing %s%s%s: \n", Yellow, string(*fileName), Reset)
 			for _, finding := range fMatches {
 				// 5 elements created by regex match
 				// 0 - Action, 1 - Org, 2- Repo, 4 - Version or Branch
@@ -166,7 +153,7 @@ func AutoFixRepository(regex *regexp.Regexp, isDryRun bool) error {
 
 			if !isDryRun {
 				// Write back to workflow file with replaced SHA
-				err = os.WriteFile(fPath, []byte(contentStr), os.ModeAppend)
+				err = os.WriteFile(loc, []byte(contentStr), os.ModeAppend)
 				if err != nil {
 					logger.Error("Problem while fixing the action file", "file", fileName, "problem", err.Error())
 				}

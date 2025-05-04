@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"regexp"
 	"time"
 
 	"github.com/cybrota/scharf/logging"
@@ -74,7 +73,6 @@ func WriteToCSV(inv *sc.Inventory) {
 func main() {
 	// list table configuration
 	tw := tablewriter.NewWriter(os.Stdout)
-	regex := regexp.MustCompile(`(\w*-?\w*)(\/)(\w+-?\w+)@((v\w+)|main|dev|master)`)
 
 	var cmdAudit = &cobra.Command{
 		Use:   "audit",
@@ -83,7 +81,7 @@ func main() {
 		Args:  cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
 			then := time.Now()
-			inv, err := sc.AuditRepository(regex)
+			inv, err := sc.AuditRepository()
 			if err != nil {
 				fmt.Println("Not a git repository. Skipping checks!")
 				return
@@ -153,7 +151,7 @@ func main() {
 				isDR = false
 			}
 			then := time.Now()
-			err := sc.AutoFixRepository(regex, isDR)
+			err := sc.AutoFixRepository(isDR)
 			if err != nil {
 				fmt.Println(err.Error())
 				fmt.Println("Not a git repository. Skipping autofix!")
@@ -172,11 +170,6 @@ func main() {
 		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🔎 Find all GitHub actions with mutable references in a workspace. Should clone your Git repositories into the workspace`),
 		Args:  cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
-			sc := sc.Scanner{
-				VCS:         sc.GitHubVCS{},
-				FileScanner: sc.GitHubWorkFlowScanner{},
-			}
-
 			root_path_flag := cmd.Flag("root")
 			var ho bool
 			head_only := cmd.Flag("head-only")
@@ -185,8 +178,8 @@ func main() {
 			} else {
 				ho = false
 			}
-			inv, err := sc.ScanRepos(root_path_flag.Value.String(), regex, ho)
 
+			inv, err := sc.Find(root_path_flag.Value.String(), ho)
 			if err != nil {
 				log.Fatal(err.Error())
 			}
