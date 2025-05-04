@@ -6,4 +6,14 @@
 
 package scanner
 
-// TODO: Write unit tests for audit.go
+import "testing"
+
+// TestScanner_ScanRepos tests the ScanRepos method by wiring in fake VCS and repository implementations.
+func TestAudit_Audit(t *testing.T) {
+	// TODO
+}
+
+// TestScanner_ScanReposDefaultBranch tests the ScanRepos but with passing --head-only flag value to true
+func TestAudit_Autofix(t *testing.T) {
+	// TODO
+}

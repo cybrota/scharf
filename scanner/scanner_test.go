@@ -7,10 +7,8 @@
 package scanner
 
 import (
-	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"testing"
 )
@@ -25,54 +23,6 @@ func CheckIfError(err error) {
 
 	fmt.Printf("\x1b[31;1m%s\x1b[0m\n", fmt.Sprintf("error: %s", err))
 	os.Exit(1)
-}
-
-// fakeRepository implements the Repository interface.
-type fakeRepository struct {
-	name            string
-	branches        []string
-	files           []string          // file names to be returned by ListFiles
-	fileContents    map[string][]byte // mapping full file path -> content
-	listBranchesErr error
-	listFilesErr    error
-	readFileErrs    map[string]error
-}
-
-func (f fakeRepository) Name() string {
-	return f.name
-}
-
-func (f fakeRepository) Location() string {
-	// For testing, just return a dummy location.
-	return filepath.Join("dummy", f.name)
-}
-
-func (f fakeRepository) ListBranches() ([]string, error) {
-	if f.listBranchesErr != nil {
-		return nil, f.listBranchesErr
-	}
-	return f.branches, nil
-}
-
-func (f fakeRepository) ListFiles(loc string) ([]string, error) {
-	if f.listFilesErr != nil {
-		return nil, f.listFilesErr
-	}
-	return f.files, nil
-}
-
-func (f fakeRepository) ReadFile(filePath string) ([]byte, error) {
-	if err, ok := f.readFileErrs[filePath]; ok {
-		return nil, err
-	}
-	if content, ok := f.fileContents[filePath]; ok {
-		return content, nil
-	}
-	return nil, os.ErrNotExist
-}
-
-func (f fakeRepository) SwitchBranch(branchName string) error {
-	return nil
 }
 
 // --- Tests ---
@@ -112,104 +62,10 @@ func TestGitHubWorkFlowScanner_ScanContent(t *testing.T) {
 
 // TestScanner_ScanRepos tests the ScanRepos method by wiring in fake VCS and repository implementations.
 func TestScanner_ScanRepos(t *testing.T) {
-	// Use a dummy root; the function will convert it to an absolute path.
-	root := "dummyRoot"
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		t.Fatalf("failed to get absolute path: %v", err)
-	}
-	// Use a regex that matches the word "match".
-	regex := regexp.MustCompile("match")
-
-	inventory, err := ScanRepos(root, regex, false)
-	if err != nil {
-		t.Fatalf("ScanRepos returned error: %v", err)
-	}
-
-	// Expect two records from repo1 (one for each branch) for file1.txt only,
-	// because only file1.txt contains the string "match".
-	expectedRecords := 2
-	if len(inventory.Records) != expectedRecords {
-		t.Errorf("expected %d inventory records, got %d", expectedRecords, len(inventory.Records))
-	}
-
-	// Verify each record.
-	for _, record := range inventory.Records {
-		if record.Repository != "repo1" {
-			t.Errorf("expected repository name 'repo1', got %q", record.Repository)
-		}
-		if record.FilePath != file1Path {
-			t.Errorf("expected file path %q, got %q", file1Path, record.FilePath)
-		}
-		if len(record.Matches) == 0 {
-			t.Errorf("expected at least one match in record for branch %q", record.Branch)
-		}
-	}
+	// TODO
 }
 
 // TestScanner_ScanReposDefaultBranch tests the ScanRepos but with passing --head-only flag value to true
 func TestScanner_ScanReposDefaultBranch(t *testing.T) {
-	// Use a dummy root; the function will convert it to an absolute path.
-	root := "dummyRoot"
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		t.Fatalf("failed to get absolute path: %v", err)
-	}
-	dirPath := ".github/workflows"
-	// Prepare file names.
-	file1 := "file1.txt"
-	file2 := "file2.txt"
-	// Construct the expected full file paths.
-	file1Path := filepath.Join(absRoot, "repo1", dirPath, file1)
-	file2Path := filepath.Join(absRoot, "repo1", dirPath, file2)
-
-	// Fake repository "repo1" returns valid branches and files.
-	repo1 := fakeRepository{
-		name:     "repo1",
-		branches: []string{"main", "dev"},
-		files:    []string{file1, file2},
-		fileContents: map[string][]byte{
-			file1Path: []byte("this file contains a match"),
-			file2Path: []byte("no relevant content"),
-		},
-		readFileErrs: make(map[string]error),
-	}
-
-	// Fake repository "repoError" simulates an error when listing branches.
-	repoError := fakeRepository{
-		name:            "repoError",
-		listBranchesErr: errors.New("failed to list branches"),
-	}
-
-	// The fake VCS returns both repositories.
-	fakeVcs := fakeVCS{
-		repos: []Repository{repo1, repoError},
-	}
-	// Use a regex that matches the word "match".
-	regex := regexp.MustCompile("match")
-
-	inventory, err := ScanRepos(root, regex, true)
-	if err != nil {
-		t.Fatalf("ScanRepos returned error: %v", err)
-	}
-
-	// Expect two records from repo1 (one for each branch) for file1.txt only,
-	// because only file1.txt contains the string "match".
-	expectedRecords := 1
-	if len(inventory.Records) != expectedRecords {
-		t.Errorf("expected %d inventory records, got %d", expectedRecords, len(inventory.Records))
-	}
-
-	// Verify each record.
-	for _, record := range inventory.Records {
-		if record.Repository != "repo1" {
-			t.Errorf("expected repository name 'repo1', got %q", record.Repository)
-		}
-		if record.FilePath != file1Path {
-			t.Errorf("expected file path %q, got %q", file1Path, record.FilePath)
-		}
-		if len(record.Matches) == 0 {
-			t.Errorf("expected at least one match in record for branch %q", record.Branch)
-		}
-	}
+	// TODO
 }

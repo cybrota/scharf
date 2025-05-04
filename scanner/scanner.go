@@ -33,16 +33,8 @@ func (g GitRepository) Name() string {
 	return g.name
 }
 
-func (g GitRepository) Location() string {
-	return string(g.absPath)
-}
-
 func (g GitRepository) ListBranches(fp FilePath) ([]string, error) {
 	return git.ListGitBranches(string(fp))
-}
-
-func (g GitRepository) SwitchBranch(branchName string) error {
-	return git.CheckoutGitBranch(string(g.absPath), branchName)
 }
 
 // InventoryRecord holds details for a regex match in a file.
