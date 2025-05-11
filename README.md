@@ -44,6 +44,20 @@ third-party GitHub actions.
 
 ## Installation
 Option 1: Install quickly via HomeBrew (Needs Brew installed)
+<picture width="50">
+  <source
+    width="100%"
+    media="(prefers-color-scheme: dark)"
+    src="https://brew.sh/assets/img/homebrew.svg"
+    alt="Brew logo (dark)"
+  />
+  <img
+    width="100%"
+    src="https://brew.sh/assets/img/homebrew.svg"
+    alt="Brew logo (light)"
+  />
+</picture>
+
 ```sh
 brew tap cybrota/cybrota
 brew install scharf
