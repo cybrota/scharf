@@ -43,12 +43,23 @@ third-party GitHub actions.
 * Mac OSX
 
 ## Installation
-Option 1: Download Prebuilt Binary
+**Option 1**: Install quickly via HomeBrew (Needs Brew installed)
 
-Visit the releases page and download the binary for your OS.
+```sh
+# Tap brew formula
+brew tap cybrota/cybrota
+
+# Install scharf
+brew install scharf
+```
+
+**Option 2**: Download Prebuilt Binary
+
+Visit the releases page and download the binary for your OS:
+
 https://github.com/cybrota/scharf/releases
 
-Option 2: Install via Script
+**Option 3**: Install via Script
 
 ```sh
 curl -sf https://raw.githubusercontent.com/cybrota/scharf/refs/heads/main/install.sh | sh
