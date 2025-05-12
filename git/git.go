@@ -10,10 +10,15 @@ package git
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/transport"
+	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
 )
 
 // ListTags lists all tags available for a given repository
@@ -116,4 +121,43 @@ func IsGitRepo(path string) bool {
 	}
 
 	return true
+}
+
+// CloneRepoToTemp clones the given GitHub repository URL (https:// or ssh:// or git@...)
+// into a newly-created temporary directory under /tmp and returns the local path.
+func CloneRepoToTemp(repoURL string) (string, error) {
+	tmpDir, err := os.MkdirTemp("/tmp", "scharf-repo-*")
+	if err != nil {
+		return "", fmt.Errorf("creating temp dir: %w", err)
+	}
+
+	opts := &git.CloneOptions{
+		URL:      repoURL,
+		Progress: os.Stdout,
+	}
+
+	if strings.HasPrefix(repoURL, "git@") ||
+		strings.HasPrefix(repoURL, "ssh://") {
+		// this will look for ~/.ssh/id_rsa (no passphrase)
+		auth, sshErr := ssh.NewPublicKeysFromFile(
+			"git",
+			filepath.Join(os.Getenv("HOME"), ".ssh", "id_rsa"),
+			"",
+		)
+		if sshErr != nil {
+			return "", fmt.Errorf("setting up SSH auth: %w", sshErr)
+		}
+		opts.Auth = auth
+	}
+
+	// clone the repo and cleanup left overs if op errors
+	if _, err = git.PlainClone(tmpDir, false, opts); err != nil {
+		os.RemoveAll(tmpDir)
+		if err == transport.ErrAuthenticationRequired {
+			return "", fmt.Errorf("authentication required for %s", repoURL)
+		}
+		return "", fmt.Errorf("cloning %s: %w", repoURL, err)
+	}
+
+	return tmpDir, nil
 }
