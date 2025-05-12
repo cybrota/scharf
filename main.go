@@ -87,59 +87,24 @@ func main() {
 				return
 			}
 
-			fmt.Printf("Auditing reposotiry at: %s%s%s\n", sc.Green, *rp, sc.Reset)
-			inv, err := sc.AuditRepository(*rp)
+			wfs, err := sc.AuditRepository(*rp)
 			if err != nil {
 				fmt.Printf("Not a git repository nor workflows found. Skipping checks!")
 				return
 			}
 
-			if len(inv.Records) > 0 {
-				tw.SetHeader([]string{
-					"Match",
-					"FilePath",
-					"Replace with SHA",
-				})
-				tw.SetHeaderColor(
-					tablewriter.Colors{tablewriter.Bold, tablewriter.FgMagentaColor},
-					tablewriter.Colors{tablewriter.Bold, tablewriter.FgMagentaColor},
-					tablewriter.Colors{tablewriter.Bold, tablewriter.FgGreenColor},
-				)
-
-				s := nw.NewSHAResolver()
-				visited := map[string]bool{}
-
-				for _, ir := range inv.Records {
-					for _, mat := range ir.Matches {
-						hashKey := mat + ir.FilePath
-						if visited[hashKey] {
-							// already reported, skip to next
-							continue
-						}
-						sha, err := s.Resolve(mat)
-						if err != nil {
-							sha = "N/A"
-						}
-						tw.Append([]string{
-							mat,
-							ir.FilePath,
-							sha,
-						})
-						visited[hashKey] = true
-					}
-				}
-				fmt.Println("Mutable references found in your GitHub actions. Please replace them to secure your CI from supply chain attacks.")
-				tw.Render()
+			now := time.Now()
+			di := now.Sub(then)
+			if len(*wfs) > 0 {
+				fmt.Println(sc.FormatAuditReport(*wfs))
 				shouldRaise := cmd.Flag("raise-error")
 				if shouldRaise.Value.String() == "true" {
 					os.Exit(1)
 				}
-				now := time.Now()
-				di := now.Sub(then)
-				fmt.Printf("Total time: %.2f s\n", di.Seconds())
 			} else {
 				fmt.Println("No mutable references found. Good job!")
 			}
+			fmt.Printf("Total time: %.2f s\n", di.Seconds())
 		},
 	}
 	cmdAudit.PersistentFlags().Bool("raise-error", false, "Raise error on any matches. Useful for interrupting CI pipelines")

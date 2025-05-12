@@ -101,7 +101,7 @@ type SHAResolver struct {
 	cache map[string]string
 }
 
-func NewSHAResolver() Resolver {
+func NewSHAResolver() *SHAResolver {
 	cache := make(map[string]string)
 
 	// Fill resolver cache from cache file

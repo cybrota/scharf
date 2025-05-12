@@ -9,6 +9,7 @@
 package scanner
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"os"
@@ -21,7 +22,16 @@ import (
 // Relative or Absolute path of a file
 type FilePath string
 
-var findRegex = regexp.MustCompile(`(\w*-?\w*)(\/)(\w+-?\w+)@((v\w+)|main|dev|master)`)
+var findRegex = regexp.MustCompile(
+	`([\w-]+)\/([\w-]+)@` +
+		`(?:` +
+		`v\d+(?:\.\d+)*` + // e.g. v1, v1.2, v10.0.1
+		`|` +
+		`\d+\.\d+(?:\.\d+)*` + // e.g. 1.2, 2.0.3  (must have at least one dot)
+		`|` +
+		`main|dev|master` + // branches
+		`)`,
+)
 
 // GitRepository implements Repository interface
 type GitRepository struct {
@@ -197,6 +207,40 @@ func ScanContent(content []byte, regex *regexp.Regexp) ([]string, error) {
 	}
 
 	return matches, nil
+}
+
+// Match represents a single match plus its position.
+type Match struct {
+	Text      string
+	Line, Col int
+}
+
+// ScanContentWithPosition scans the content and returns each match
+// along with its 1-based line and column.
+func ScanContentWithPosition(content []byte, regex *regexp.Regexp) ([]Match, error) {
+	var results []Match
+
+	// Split on \n so we can track line numbers easily.
+	lines := bytes.Split(content, []byte("\n"))
+	for i, line := range lines {
+		// FindAllIndex returns a slice of [2]int{startByte, endByte} pairs.
+		locs := regex.FindAllIndex(line, -1)
+		for _, loc := range locs {
+			start := loc[0]
+			end := loc[1]
+			// Convert the byte offsets back to string
+			matchedText := string(line[start:end])
+			// Column is byte-offset +1. (If you care about rune/character columns,
+			// you can convert line[:start] to runes and take len(runes).)
+			results = append(results, Match{
+				Text: matchedText,
+				Line: i + 1,
+				Col:  start + 1,
+			})
+		}
+	}
+
+	return results, nil
 }
 
 func Find(root string, headOnly bool) (*Inventory, error) {
