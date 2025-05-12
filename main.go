@@ -81,9 +81,16 @@ func main() {
 		Args:  cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
 			then := time.Now()
-			inv, err := sc.AuditRepository()
+			rp, err := sc.BuildRepoPath("audit", args)
 			if err != nil {
-				fmt.Println("Not a git repository. Skipping checks!")
+				fmt.Println(err.Error())
+				return
+			}
+
+			fmt.Printf("Auditing reposotiry at: %s%s%s\n", sc.Green, *rp, sc.Reset)
+			inv, err := sc.AuditRepository(*rp)
+			if err != nil {
+				fmt.Printf("Not a git repository nor workflows found. Skipping checks!")
 				return
 			}
 
@@ -151,7 +158,13 @@ func main() {
 				isDR = false
 			}
 			then := time.Now()
-			err := sc.AutoFixRepository(isDR)
+			rp, err := sc.BuildRepoPath("autofix", args)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+
+			err = sc.AutoFixRepository(*rp, isDR)
 			if err != nil {
 				fmt.Println(err.Error())
 				fmt.Println("Not a git repository. Skipping autofix!")

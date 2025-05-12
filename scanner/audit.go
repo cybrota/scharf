@@ -36,19 +36,19 @@ const (
 )
 
 // AuditRepository collects inventory details from current Git repository.
-func AuditRepository() (*Inventory, error) {
-
-	if !git.IsGitRepo(".") {
-		return nil, fmt.Errorf("The current directory is not a Git repository")
-	}
-
-	absPath, err := os.Getwd()
+func AuditRepository(path FilePath) (*Inventory, error) {
+	abs, err := filepath.Abs(filepath.Join(string(path)))
 	if err != nil {
-		return nil, fmt.Errorf("dir error: %w", err)
+		logger.Error("failed to find absolute path", "err", err)
+		return nil, fmt.Errorf("os: %w", err)
 	}
 
-	paths := strings.Split(absPath, "/")
-	loc := filepath.Join(absPath, ".github", "workflows")
+	if !git.IsGitRepo(abs) {
+		return nil, fmt.Errorf("The directory: %s is not a Git repository", abs)
+	}
+
+	paths := strings.Split(abs, "/")
+	loc := filepath.Join(abs, ".github", "workflows")
 
 	fileNames, err := ListFiles(FilePath(loc))
 	if err != nil {
@@ -74,7 +74,7 @@ func AuditRepository() (*Inventory, error) {
 			matches = append(matches, string(match))
 		}
 
-		b, err := git.GetCurrentBranch(absPath)
+		b, err := git.GetCurrentBranch(abs)
 		if err != nil {
 			return nil, fmt.Errorf("git error: %w", err)
 		}
@@ -93,23 +93,21 @@ func AuditRepository() (*Inventory, error) {
 
 // AutoFixRepository tries to match and replace third-party action references with SHA
 // It uses SHA resolution to find accurate SHA
-func AutoFixRepository(isDryRun bool) error {
+func AutoFixRepository(path FilePath, isDryRun bool) error {
 	// Keep a cache for action SHA to avoid many network lookups
 	resolver := network.NewSHAResolver()
 
-	if isDryRun {
-		fmt.Println("Running autofix in dryrun mode.")
-	}
-
-	if !git.IsGitRepo(".") {
-		return fmt.Errorf("The current directory is not a Git repository")
-	}
-	absPath, err := os.Getwd()
+	abs, err := filepath.Abs(filepath.Join(string(path)))
 	if err != nil {
-		return fmt.Errorf("dir error: %w", err)
+		logger.Error("failed to find absolute path", "err", err)
+		return fmt.Errorf("os: %w", err)
 	}
 
-	workFlowDir := filepath.Join(absPath, ".github", "workflows")
+	if !git.IsGitRepo(abs) {
+		return fmt.Errorf("The directory: %s is not a Git repository", abs)
+	}
+
+	workFlowDir := filepath.Join(abs, ".github", "workflows")
 	fileNames, err := ListFiles(FilePath(workFlowDir))
 	if err != nil {
 		return fmt.Errorf("file error: %w", err)
@@ -167,4 +165,39 @@ func AutoFixRepository(isDryRun bool) error {
 		fmt.Println("The displayed fixes are not staged. Re-run 'scharf autofix' and omit the flag '--dry-run' to apply fixes.")
 	}
 	return nil
+}
+
+// BuildRepoPath builds a repo path from arguments
+// If repo is a local path, absolute path is returned
+// If repo is a cloud URL, repository is cloned into a temporary directory for operation.
+func BuildRepoPath(action string, args []string) (*FilePath, error) {
+	if len(args) > 0 {
+		repo := args[0]
+
+		if strings.HasPrefix(repo, "https://") || strings.HasPrefix(repo, "git@") ||
+			strings.HasPrefix(repo, "ssh://") {
+			if action == "audit" || action == "autofix" {
+				fmt.Printf("Cloning repository: %s%s%s\n", Green, repo, Reset)
+				tmp_path, err := git.CloneRepoToTemp(repo)
+				if err != nil {
+					if strings.HasPrefix(repo, "https://") {
+						return nil, fmt.Errorf("%sProblem encountered while cloning: %s.%s Use SSH instead of HTTPS, Ex: git@github.com:psf/requests.git", Red, repo, Reset)
+					}
+					return nil, fmt.Errorf("Problem encountered while cloning: %s. Maybe the repository is private ?", repo)
+				}
+
+				res := FilePath(tmp_path)
+				fmt.Printf("Cloned %s%s%s into %s%s%s\n", Green, repo, Reset, Green, tmp_path, Reset)
+				return &res, nil
+			} else {
+				return nil, fmt.Errorf("%sUnsupported action:%s %s", Red, repo, Reset)
+			}
+		} else {
+			return nil, nil
+		}
+	}
+
+	res := FilePath(".")
+	// Default to current directory
+	return &res, nil
 }
