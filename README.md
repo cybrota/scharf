@@ -71,10 +71,11 @@ This script installs the latest version automatically (requires curl).
 
 ### 1. Autofix Mutable Actions
 
-From within a cloned Git repository, run:
+Point to a Git repository, run:
 ```sh
-scharf autofix
+scharf autofix <repo>
 ```
+Note: By default audit looks for current directory (.) if repo is not passed.
 
 Scharf rewrites your workflow file, replacing, for example:
 ```sh
@@ -82,15 +83,16 @@ actions/github-script@v7 ➔ actions/github-script@60a0d83039c74a4aee543508d2ffc
 ```
 Include --dry-run to preview changes without modifying files:
 ```sh
-scharf autofix --dry-run
+scharf autofix <repo> --dry-run
 ```
 
 ### 2. Audit a Single Repository
 Scan for mutable references in your current repository:
 ```sh
-scharf audit
+scharf audit <repo>
 ```
-The output lists each insecure tag, its file location, and the SHA you should pin.
+
+The output lists each insecure tag, its file location, and the SHA you should pin. You can pass `--raise-error` flag to return a Non-zero error code.
 
 ### 3. Find Across Many Repos
 Point Scharf at a directory of cloned repositories to scan multiple projects:
