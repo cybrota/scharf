@@ -97,6 +97,12 @@ func ApplyFixesInFile(wf Workflow, isDryRun bool) error {
 
 	// 3) Apply each fix
 	for _, issue := range wf.Issues {
+		loc := fmt.Sprintf("Line %d, Col %d", issue.Line, issue.Column)
+
+		if issue.FixSHA == SHA256NotAvailable {
+			fmt.Printf("  - [%s%s%s] %s Warning: Couldn't fix the reference: %s. Reference '%s' is not found on GitHub%s ⚠️\n", Gray, loc, Reset, Yellow, issue.Action, issue.Version, Reset)
+			continue
+		}
 		idx := issue.Line - 1
 		if idx < 0 || idx >= len(lines) {
 			return fmt.Errorf("invalid line %d in %s", issue.Line, wf.FilePath)
@@ -121,15 +127,9 @@ func ApplyFixesInFile(wf Workflow, isDryRun bool) error {
 		}
 
 		// Perform exactly one replacement
-		newSuffix := strings.Replace(suffix, issue.Original, fmt.Sprintf("%s@%s #%s", issue.Action, issue.FixSHA, issue.Version), 1)
+		newSuffix := strings.Replace(suffix, issue.Original, fmt.Sprintf("%s@%s # %s", issue.Action, issue.FixSHA, issue.Version), 1)
 		lines[idx] = prefix + newSuffix
-		loc := fmt.Sprintf("Line %d, Col %d", issue.Line, issue.Column)
-
-		if issue.FixSHA != SHA256NotAvailable {
-			fmt.Printf("  - [%s%s%s] %s Fixed: Pinned '%s%s' to '%s' %s\n", Gray, loc, Reset, Green, issue.Action, fmt.Sprintf("%s@%s", issue.Action, issue.FixSHA), issue.Version, Reset)
-		} else {
-			fmt.Printf("  - [%s%s%s] %s Warning: Couldn't fix the reference: %s. Reference '%s' is not found on GitHub%s ⚠️\n", Gray, loc, Reset, Yellow, issue.Action, issue.Version, Reset)
-		}
+		fmt.Printf("  - [%s%s%s] %s Fixed: Pinned '%s%s' to '%s' %s\n", Gray, loc, Reset, Green, issue.Action, fmt.Sprintf("%s@%s", issue.Action, issue.FixSHA), issue.Version, Reset)
 	}
 
 	// 4) Write back (you could write to a temp file + rename for safety)

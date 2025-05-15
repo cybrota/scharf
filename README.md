@@ -5,12 +5,12 @@
   <source
     width="100%"
     media="(prefers-color-scheme: dark)"
-    src="https://github.com/cybrota/sharfer/blob/main/logo.png"
+    src="https://raw.githubusercontent.com/cybrota/scharf/refs/heads/main/logo.png"
     alt="Scharf logo (dark)"
   />
   <img
     width="100%"
-    src="https://github.com/cybrota/sharfer/blob/main/logo.png"
+    src="https://raw.githubusercontent.com/cybrota/scharf/refs/heads/main/logo.png"
     alt="Scharf logo (light)"
   />
 </picture>
@@ -73,8 +73,10 @@ This script installs the latest version automatically (requires curl).
 
 Point to a Git repository, run:
 ```sh
-scharf autofix <repo>
+# Auto fix a local repository
+scharf autofix git_repo
 ```
+
 Note: By default audit looks for current directory (.) if repo is not passed.
 
 Scharf rewrites your workflow file, replacing, for example:
@@ -83,13 +85,17 @@ actions/github-script@v7 ➔ actions/github-script@60a0d83039c74a4aee543508d2ffc
 ```
 Include --dry-run to preview changes without modifying files:
 ```sh
-scharf autofix <repo> --dry-run
+scharf autofix git_repo --dry-run
 ```
 
 ### 2. Audit a Single Repository
 Scan for mutable references in your current repository:
 ```sh
-scharf audit <repo>
+# Audit a local repository
+scharf audit git_repo
+
+# Audit a remote repository. This automatically clones remote to /tmp location with scharf-* prefix
+scharf audit https_or_git_url
 ```
 
 The output lists each insecure tag, its file location, and the SHA you should pin. You can pass `--raise-error` flag to return a Non-zero error code.
@@ -141,6 +147,9 @@ jobs:
 ## The Risk of Mutable Tags
 
 Mutable tags (e.g., @v1 or @main) allow action authors to push new code without changing your workflow. If a tag gets compromised, your CI can run malicious code. Scharf eliminates this vulnerability by always pinning to a specific, audited commit.
+
+## TODO for Scharf
+Check Issues Tab on GitHub
 
 ## Further Reading:
 
