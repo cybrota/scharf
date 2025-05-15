@@ -11,6 +11,7 @@ package git
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -131,9 +132,30 @@ func CloneRepoToTemp(repoURL string) (string, error) {
 		return "", fmt.Errorf("creating temp dir: %w", err)
 	}
 
+	// 1) Try native git
+	if gitPath, err := exec.LookPath("git"); err == nil {
+		cmd := exec.Command(
+			gitPath,
+			"clone",
+			"--depth", "1", // shallow
+			repoURL,
+			tmpDir,
+		)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err == nil {
+			return tmpDir, nil
+		}
+		// if native clone failed, we'll fall back
+		fmt.Fprintf(os.Stderr, "native git clone failed: %v; falling back to go-git\n", err)
+	}
+
+	// 2) If native Git is not available, use go-git shallow clone
 	opts := &git.CloneOptions{
-		URL:      repoURL,
-		Progress: os.Stdout,
+		URL:          repoURL,
+		Progress:     os.Stdout,
+		Depth:        1,    // <-- shallow
+		SingleBranch: true, // <-- single branch
 	}
 
 	if strings.HasPrefix(repoURL, "git@") ||

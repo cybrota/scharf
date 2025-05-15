@@ -76,8 +76,8 @@ func main() {
 
 	var cmdAudit = &cobra.Command{
 		Use:   "audit",
-		Short: "🥽 Audit a given Git repository to identify vulnerable actions with mutable references. Must run from a Git repository",
-		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🥽 Audit the actions and raise error if any mutable references found. Good used with Ci/CD pipelines.`),
+		Short: "🥽 Audit a local or remote Git repository to identify vulnerable actions with mutable references: 'scharf audit <repo>|<url>'",
+		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🥽 Audit the actions and raise error if any mutable references found. Good used with Ci/CD pipelines: 'scharf audit <repo>|<url>'`),
 		Args:  cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
 			then := time.Now()
@@ -111,8 +111,8 @@ func main() {
 
 	var cmdAutoFix = &cobra.Command{
 		Use:   "autofix",
-		Short: "🪄 Auto-fixes vulnerable third-party GitHub actions with mutable references. Must run from a Git repository",
-		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🪄 Auto-fixes vulnerable third-party GitHub actions with mutable references. Must run from a Git repository`),
+		Short: "🪄 Auto-fixes vulnerable third-party GitHub actions with mutable references: 'scharf autofix <repo>|<url>'",
+		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🪄 Auto-fixes vulnerable third-party GitHub actions with mutable references: 'scharf audit <repo>|<url>'`),
 		Args:  cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
 			isDryRun := cmd.Flag("dry-run")
