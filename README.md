@@ -24,8 +24,6 @@ Scharf scans your workflows, identifies mutable action references, and replaces 
 
 By pinning every third-party action to a specific commit SHA, Scharf prevents unexpected or malicious changes from creeping into your CI/CD process. This ensures a stable and secure development lifecycle by eliminating risks tied to drifting dependencies and mutable tags.
 
-third-party GitHub actions.
-
 ## Key Features
 
 * Autofix Workflows: Detect and update mutable action tags to their corresponding SHAs in your workflow files.
@@ -43,7 +41,7 @@ third-party GitHub actions.
 * Mac OSX
 
 ## Installation
-**Option 1**: Install quickly via HomeBrew (Needs Brew installed)
+**Option 1**: Install quickly via Homebrew (requires Homebrew installed)
 
 ```sh
 # Tap brew formula
@@ -159,5 +157,5 @@ Supply Chain Compromise of Third-Party tj-actions/changed-files:
 Whose code am I running in GitHub Actions?
 - https://alexwlchan.net/2025/github-actions-audit/
 
-GItHub CVE: tj-actions changed-files through 45.0.7 allows remote attackers to discover secrets by reading actions logs
+GitHub CVE: tj-actions changed-files through 45.0.7 allows remote attackers to discover secrets by reading action logs
 * https://github.com/advisories/ghsa-mrrh-fwg8-r2c3
