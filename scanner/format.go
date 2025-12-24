@@ -51,25 +51,25 @@ func FormatAuditReport(workflows []Workflow) string {
 
 	for _, wf := range workflows {
 		// Header per workflow
-		b.WriteString(fmt.Sprintf(
+		fmt.Fprintf(&b,
 			"%s%s%s\n",
 			Cyan, wf.FilePath, Reset,
-		))
+		)
 
 		for _, f := range wf.Issues {
 			// Issue line: location + message
 			loc := fmt.Sprintf("Line %d, Col %d", f.Line, f.Column)
-			b.WriteString(fmt.Sprintf(
+			fmt.Fprintf(&b,
 				"  - [%s%s%s] %s%s%s\n",
 				Gray, loc, Reset,
 				Red, f.Description, Reset,
-			))
+			)
 			// Fix line
-			b.WriteString(fmt.Sprintf(
+			fmt.Fprintf(&b,
 				"    🡆 %sFix:%s %s%s%s\n\n",
 				Green, Reset,
 				Yellow, f.FixMsg, Reset,
-			))
+			)
 		}
 	}
 
@@ -129,7 +129,7 @@ func ApplyFixesInFile(wf Workflow, isDryRun bool) error {
 		// Perform exactly one replacement
 		newSuffix := strings.Replace(suffix, issue.Original, fmt.Sprintf("%s@%s # %s", issue.Action, issue.FixSHA, issue.Version), 1)
 		lines[idx] = prefix + newSuffix
-		fmt.Printf("  - [%s%s%s] %s Fixed: Pinned '%s%s' to '%s' %s\n", Gray, loc, Reset, Green, issue.Action, fmt.Sprintf("%s@%s", issue.Action, issue.FixSHA), issue.Version, Reset)
+		fmt.Printf("  - [%s%s%s] %s Fixed: Pinned '%s%s' to '%s' %s\n", Gray, loc, Reset, Green, issue.Action, fmt.Sprintf("@%s", issue.Version), issue.FixSHA, Reset)
 	}
 
 	// 4) Write back (you could write to a temp file + rename for safety)
