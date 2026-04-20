@@ -22,15 +22,20 @@ Goal: let developers automate pinned SHA refreshes with a configurable cool-down
    - continue with upgrade
 4. `upgrade-all-sha` only processes Scharf-formatted pinned refs:
    - `owner/repo@<40hexsha> # <version>`
-   - any non-matching pinned refs are skipped with warning
+   - and also supports deterministic fallback for bare pinned refs: `owner/repo@<40hexsha>`
 5. Add `--dry-run` support for both commands.
 6. For `upgrade` with SHA input, require `--from-version` to disambiguate current version.
+7. For `upgrade-all-sha` fallback inference (`owner/repo@<40hexsha>`):
+   - exactly one tag points to SHA -> infer current version and upgrade in same run
+   - zero tags point to SHA -> skip with reason
+   - multiple tags point to SHA -> skip with reason (ambiguous)
+8. Build a per-action in-memory tag index during a run to avoid repeated API calls.
 
 ## Non-Goals
 
 - Bulk upgrade behavior inside `autofix`.
 - Best-effort parsing for arbitrary comment formats.
-- Implicit inference when version context is missing.
+- Best-effort inference when reverse lookup is ambiguous.
 
 ## CLI Design
 
@@ -67,14 +72,17 @@ Flags:
 Behavior:
 
 - Scans workflow files for Scharf-formatted pinned refs.
-- Parses `action`, current pinned SHA, and current version comment.
+- Parses either:
+  - `action@<sha> # <version>` (direct)
+  - `action@<sha>` (fallback infer)
 - Computes next version + next SHA.
 - Applies replacement in-place unless `--dry-run`.
 
 End summary includes:
 
 - updated
-- skipped_ambiguous
+- skipped_ambiguous_sha_tags
+- skipped_no_tag_for_sha
 - skipped_no_next
 - warnings
 - errors
@@ -100,8 +108,9 @@ End summary includes:
 
 - Add scanner flow for pinned SHA upgrade candidates.
 - Reuse line/column-safe replacement pattern from existing fix pipeline.
-- Strict parser for format: `owner/repo@<sha> # <version>`.
-- Skip non-matching refs with warnings.
+- Parse both strict hinted and bare pinned SHA formats.
+- Infer current version via per-action reverse tag index (`sha -> []tags`).
+- Skip with explicit reasons for zero-tag and multi-tag matches.
 
 ## Data Flow
 
@@ -120,8 +129,10 @@ End summary includes:
 
 1. Resolve repo path (`BuildRepoPath`).
 2. Enumerate workflow files.
-3. Find upgrade candidates matching strict Scharf pin format.
+3. Find upgrade candidates matching pinned SHA formats.
 4. For each candidate:
+   - use version hint if present, else infer from SHA via per-action tag index
+   - skip when no tag matches or multiple tags match
    - compute next version
    - resolve next SHA
    - warn if cool-down not met
@@ -147,10 +158,11 @@ End summary includes:
    - cool-down warning behavior
    - SHA input with/without `--from-version`
 2. Scanner tests:
-   - strict parser for Scharf pin format
+   - parser for hinted and bare pinned SHA formats
+   - reverse lookup inference behavior (1 match, 0 match, >1 match)
    - replacement correctness at line/column boundaries
    - dry-run behavior
-   - skip warning for non-matching pins
+   - explicit skip reasons in summary output
 3. Command tests:
    - `upgrade` happy path, ambiguous path, and cool-down warning
    - `upgrade-all-sha` with mixed valid/invalid entries and summary counts

@@ -20,9 +20,16 @@ import (
 )
 
 var pinnedRefRegex = regexp.MustCompile(`([\w.-]+/[\w.-]+)@([a-f0-9]{40})\s+#\s+([^\s#]+)`)
+var barePinnedRefRegex = regexp.MustCompile(`([\w.-]+/[\w.-]+)@([a-f0-9]{40})\s*$`)
+
+const (
+	skipReasonNoTagForSHA      = "no tag points to pinned SHA"
+	skipReasonAmbiguousSHATags = "ambiguous: multiple tags point to pinned SHA"
+)
 
 type upgradeResolver interface {
 	ResolveNext(action string, currentVersion string, cooldownHours int) (*network.UpgradeResult, error)
+	ListTags(action string) ([]network.BranchOrTag, error)
 }
 
 var newUpgradeResolver = func() upgradeResolver {
@@ -34,6 +41,12 @@ type PinnedRef struct {
 	Action  string
 	SHA     string
 	Version string
+}
+
+// BarePinnedRef is a pinned action reference without version hint.
+type BarePinnedRef struct {
+	Action string
+	SHA    string
 }
 
 // ParsePinnedRef parses owner/repo@<40hexsha> # <version> from a line.
@@ -48,6 +61,16 @@ func ParsePinnedRef(line string) (PinnedRef, bool) {
 		SHA:     match[2],
 		Version: match[3],
 	}, true
+}
+
+// ParseBarePinnedRef parses owner/repo@<40hexsha> from a line.
+func ParseBarePinnedRef(line string) (BarePinnedRef, bool) {
+	match := barePinnedRefRegex.FindStringSubmatch(line)
+	if len(match) != 3 {
+		return BarePinnedRef{}, false
+	}
+
+	return BarePinnedRef{Action: match[1], SHA: match[2]}, true
 }
 
 // CollectPinnedRefs returns strict Scharf-format pinned references found in content.
@@ -125,6 +148,7 @@ func upgradePinnedSHAsInContent(content []byte, workflowPath string, resolver up
 	lines := strings.Split(string(content), "\n")
 	changed := false
 	skippedNonScharf := 0
+	tagIndexByAction := map[string]map[string][]string{}
 
 	for i := range lines {
 		if !strings.Contains(lines[i], "uses:") {
@@ -132,9 +156,21 @@ func upgradePinnedSHAsInContent(content []byte, workflowPath string, resolver up
 		}
 
 		parsed, ok := ParsePinnedRef(lines[i])
+		hadVersionHint := ok
 		if !ok {
-			skippedNonScharf++
-			continue
+			bare, bareOK := ParseBarePinnedRef(lines[i])
+			if !bareOK {
+				skippedNonScharf++
+				continue
+			}
+
+			currentVersion, reason, inferred := inferVersionForBarePinnedSHA(bare, resolver, tagIndexByAction)
+			if !inferred {
+				fmt.Printf("%sWarning:%s skipping %s@%s at %s:%d (%s)\n", Yellow, Reset, bare.Action, bare.SHA, workflowPath, i+1, reason)
+				continue
+			}
+
+			parsed = PinnedRef{Action: bare.Action, SHA: bare.SHA, Version: currentVersion}
 		}
 
 		result, err := resolver.ResolveNext(parsed.Action, parsed.Version, cooldownHours)
@@ -148,6 +184,9 @@ func upgradePinnedSHAsInContent(content []byte, workflowPath string, resolver up
 		}
 
 		fromRef := fmt.Sprintf("%s@%s # %s", parsed.Action, parsed.SHA, parsed.Version)
+		if !hadVersionHint {
+			fromRef = fmt.Sprintf("%s@%s", parsed.Action, parsed.SHA)
+		}
 		toRef := fmt.Sprintf("%s@%s # %s", parsed.Action, result.NextSHA, result.NextVersion)
 
 		if !strings.Contains(lines[i], fromRef) {
@@ -174,4 +213,38 @@ func upgradePinnedSHAsInContent(content []byte, workflowPath string, resolver up
 	}
 
 	return []byte(strings.Join(lines, "\n")), true
+}
+
+func inferVersionForBarePinnedSHA(
+	bare BarePinnedRef,
+	resolver upgradeResolver,
+	tagIndexByAction map[string]map[string][]string,
+) (string, string, bool) {
+	shaToTags, ok := tagIndexByAction[bare.Action]
+	if !ok {
+		tags, err := resolver.ListTags(bare.Action)
+		if err != nil {
+			return "", fmt.Sprintf("failed to list tags: %v", err), false
+		}
+
+		shaToTags = map[string][]string{}
+		for _, tag := range tags {
+			if tag.Name == "" || tag.Commit.Sha == "" {
+				continue
+			}
+			shaToTags[tag.Commit.Sha] = append(shaToTags[tag.Commit.Sha], tag.Name)
+		}
+
+		tagIndexByAction[bare.Action] = shaToTags
+	}
+
+	matches := shaToTags[bare.SHA]
+	if len(matches) == 0 {
+		return "", skipReasonNoTagForSHA, false
+	}
+	if len(matches) > 1 {
+		return "", skipReasonAmbiguousSHATags, false
+	}
+
+	return matches[0], "", true
 }

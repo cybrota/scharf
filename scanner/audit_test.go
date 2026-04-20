@@ -20,6 +20,7 @@ import (
 type fakeUpgradeResolver struct {
 	results map[string]*network.UpgradeResult
 	errors  map[string]error
+	tags    map[string][]network.BranchOrTag
 }
 
 func (f fakeUpgradeResolver) ResolveNext(action string, currentVersion string, cooldownHours int) (*network.UpgradeResult, error) {
@@ -31,6 +32,13 @@ func (f fakeUpgradeResolver) ResolveNext(action string, currentVersion string, c
 		return r, nil
 	}
 	return nil, nil
+}
+
+func (f fakeUpgradeResolver) ListTags(action string) ([]network.BranchOrTag, error) {
+	if tags, ok := f.tags[action]; ok {
+		return tags, nil
+	}
+	return []network.BranchOrTag{}, nil
 }
 
 func captureStdout(t *testing.T, fn func()) string {
@@ -266,5 +274,120 @@ func TestUpgradePinnedSHAsCooldownWarningStillUpgrades(t *testing.T) {
 	}
 	if !strings.Contains(output, "under cooldown") {
 		t.Fatalf("expected cooldown warning output, got: %s", output)
+	}
+}
+
+func TestUpgradePinnedSHAsInfersVersionFromBarePinnedSHA(t *testing.T) {
+	tmp := t.TempDir()
+	initGitRepo(t, tmp)
+
+	workflow := strings.Join([]string{
+		"jobs:",
+		"  test:",
+		"    steps:",
+		"      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}, "\n")
+	workflowFile := writeWorkflow(t, tmp, workflow)
+
+	originalResolver := newUpgradeResolver
+	newUpgradeResolver = func() upgradeResolver {
+		return fakeUpgradeResolver{
+			results: map[string]*network.UpgradeResult{
+				"actions/checkout@v4": {
+					Action:         "actions/checkout",
+					CurrentVersion: "v4",
+					CurrentSHA:     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					NextVersion:    "v4.1.0",
+					NextSHA:        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				},
+			},
+			tags: map[string][]network.BranchOrTag{
+				"actions/checkout": {
+					{Name: "v4", Commit: network.Commit{Sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+				},
+			},
+		}
+	}
+	t.Cleanup(func() { newUpgradeResolver = originalResolver })
+
+	if err := UpgradePinnedSHAs(FilePath(tmp), 24, false); err != nil {
+		t.Fatalf("UpgradePinnedSHAs returned error: %v", err)
+	}
+
+	updated, err := os.ReadFile(workflowFile)
+	if err != nil {
+		t.Fatalf("reading workflow file: %v", err)
+	}
+	if !strings.Contains(string(updated), "actions/checkout@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb # v4.1.0") {
+		t.Fatalf("expected inferred-version upgrade in file, got: %s", string(updated))
+	}
+}
+
+func TestUpgradePinnedSHAsSkipsBarePinnedSHAWhenNoTagMatches(t *testing.T) {
+	tmp := t.TempDir()
+	initGitRepo(t, tmp)
+
+	workflow := strings.Join([]string{
+		"jobs:",
+		"  test:",
+		"    steps:",
+		"      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}, "\n")
+
+	writeWorkflow(t, tmp, workflow)
+
+	originalResolver := newUpgradeResolver
+	newUpgradeResolver = func() upgradeResolver {
+		return fakeUpgradeResolver{tags: map[string][]network.BranchOrTag{
+			"actions/checkout": {
+				{Name: "v4", Commit: network.Commit{Sha: "cccccccccccccccccccccccccccccccccccccccc"}},
+			},
+		}}
+	}
+	t.Cleanup(func() { newUpgradeResolver = originalResolver })
+
+	output := captureStdout(t, func() {
+		if err := UpgradePinnedSHAs(FilePath(tmp), 24, false); err != nil {
+			t.Fatalf("UpgradePinnedSHAs returned error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "no tag points to pinned SHA") {
+		t.Fatalf("expected no-tag skip reason in output, got: %s", output)
+	}
+}
+
+func TestUpgradePinnedSHAsSkipsBarePinnedSHAWhenAmbiguous(t *testing.T) {
+	tmp := t.TempDir()
+	initGitRepo(t, tmp)
+
+	workflow := strings.Join([]string{
+		"jobs:",
+		"  test:",
+		"    steps:",
+		"      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}, "\n")
+
+	writeWorkflow(t, tmp, workflow)
+
+	originalResolver := newUpgradeResolver
+	newUpgradeResolver = func() upgradeResolver {
+		return fakeUpgradeResolver{tags: map[string][]network.BranchOrTag{
+			"actions/checkout": {
+				{Name: "v4", Commit: network.Commit{Sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+				{Name: "v4.0.1", Commit: network.Commit{Sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+			},
+		}}
+	}
+	t.Cleanup(func() { newUpgradeResolver = originalResolver })
+
+	output := captureStdout(t, func() {
+		if err := UpgradePinnedSHAs(FilePath(tmp), 24, false); err != nil {
+			t.Fatalf("UpgradePinnedSHAs returned error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "ambiguous: multiple tags point to pinned SHA") {
+		t.Fatalf("expected ambiguous-tag skip reason in output, got: %s", output)
 	}
 }

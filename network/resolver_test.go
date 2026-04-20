@@ -546,6 +546,30 @@ func TestGetRefList(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("non-2xx status", func(t *testing.T) {
+		customTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			errorJSON := []byte(`{"message":"API rate limit exceeded"}`)
+			return &http.Response{
+				StatusCode: http.StatusForbidden,
+				Body:       io.NopCloser(bytes.NewReader(errorJSON)),
+				Header:     make(http.Header),
+			}, nil
+		})
+
+		withHTTPClientTransport(customTransport, func() {
+			_, err := GetRefList("owner/repo")
+			if err == nil {
+				t.Fatal("expected error for non-2xx status, got nil")
+			}
+			if !strings.Contains(err.Error(), "http status 403") {
+				t.Fatalf("expected status in error, got: %v", err)
+			}
+			if !strings.Contains(err.Error(), "owner/repo") {
+				t.Fatalf("expected action in error, got: %v", err)
+			}
+		})
+	})
 }
 
 func TestGetRefList_UsesGitHubTokenWhenPresent(t *testing.T) {

@@ -103,6 +103,10 @@ func GetRefList(action string) ([]BranchOrTag, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return []BranchOrTag{}, fmt.Errorf("http status %d for action %s", resp.StatusCode, action)
+	}
+
 	var b []BranchOrTag
 	if err := json.NewDecoder(resp.Body).Decode(&b); err != nil {
 		return []BranchOrTag{}, fmt.Errorf("json: %w", err)
@@ -114,6 +118,10 @@ func GetRefList(action string) ([]BranchOrTag, error) {
 // SHAResolver resolves a given action to it's safe SHA commit
 type SHAResolver struct {
 	cache map[string]string
+}
+
+func (s SHAResolver) ListTags(action string) ([]BranchOrTag, error) {
+	return GetRefList(action)
 }
 
 // UpgradeResult holds the details needed for pinned SHA upgrade flows.
