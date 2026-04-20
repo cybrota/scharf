@@ -142,7 +142,7 @@ func BuildRepoPath(action string, args []string) (*FilePath, error) {
 
 		if strings.HasPrefix(repo, "https://") || strings.HasPrefix(repo, "git@") ||
 			strings.HasPrefix(repo, "ssh://") {
-			if action == "audit" || action == "autofix" {
+			if action == "audit" || action == "autofix" || action == "upgrade-all-sha" {
 				fmt.Printf("Cloning repository: %s%s%s\n", Blue, repo, Reset)
 				tmp_path, err := git.CloneRepoToTemp(repo)
 				if err != nil {

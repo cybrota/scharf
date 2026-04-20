@@ -12,11 +12,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // --- Helper functions for testing ---
@@ -175,6 +177,142 @@ func TestSearchTag(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNextVersion(t *testing.T) {
+	// GitHub tags API returns newest first.
+	tags := []string{"v1.2.0", "v1.1.0", "v1.0.0"}
+
+	t.Run("finds immediate next version", func(t *testing.T) {
+		got, found := nextVersion(tags, "v1.1.0")
+		if !found || got != "v1.2.0" {
+			t.Fatalf("nextVersion(tags, v1.1.0) = (%s,%v), want (v1.2.0,true)", got, found)
+		}
+	})
+
+	t.Run("returns not found when current is newest", func(t *testing.T) {
+		got, found := nextVersion(tags, "v1.2.0")
+		if found || got != "" {
+			t.Fatalf("nextVersion(tags, v1.2.0) = (%s,%v), want (\"\",false)", got, found)
+		}
+	})
+}
+
+func TestIsUnderCooldown(t *testing.T) {
+	now := time.Now().UTC()
+
+	t.Run("returns true for a fresh tag", func(t *testing.T) {
+		fresh := now.Add(-2 * time.Hour)
+		if !isUnderCooldown(fresh, 24) {
+			t.Fatalf("expected fresh tag to be under cooldown")
+		}
+	})
+
+	t.Run("returns false for a stale tag", func(t *testing.T) {
+		stale := now.Add(-48 * time.Hour)
+		if isUnderCooldown(stale, 24) {
+			t.Fatalf("expected stale tag to not be under cooldown")
+		}
+	})
+
+	t.Run("uses safe default when cooldown is non-positive", func(t *testing.T) {
+		fresh := now.Add(-2 * time.Hour)
+		if !isUnderCooldown(fresh, 0) {
+			t.Fatalf("expected cooldown=0 to use safe default and keep tag under cooldown")
+		}
+	})
+}
+
+func TestSHAResolver_ResolveNext(t *testing.T) {
+	customTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		data := []BranchOrTag{
+			{Name: "v1.2.0", Commit: Commit{Sha: "sha-120"}},
+			{Name: "v1.1.0", Commit: Commit{Sha: "sha-110"}},
+			{Name: "v1.0.0", Commit: Commit{Sha: "sha-100"}},
+		}
+
+		b, err := json.Marshal(data)
+		if err != nil {
+			return nil, err
+		}
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(b)),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	withHTTPClientTransport(customTransport, func() {
+		resolver := SHAResolver{cache: map[string]string{}}
+		got, err := resolver.ResolveNext("owner/repo", "v1.1.0", 24)
+		if err != nil {
+			t.Fatalf("ResolveNext() returned error: %v", err)
+		}
+
+		if got.NextVersion != "v1.2.0" {
+			t.Fatalf("ResolveNext() next version = %q; want %q", got.NextVersion, "v1.2.0")
+		}
+
+		if got.NextSHA != "sha-120" {
+			t.Fatalf("ResolveNext() next SHA = %q; want %q", got.NextSHA, "sha-120")
+		}
+	})
+}
+
+func TestSHAResolver_ResolveNext_UnderCooldownFromCommitTimestamp(t *testing.T) {
+	now := time.Now().UTC()
+	fresh := now.Add(-2 * time.Hour).Format(time.RFC3339)
+
+	customTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var b []byte
+		var err error
+
+		switch req.URL.String() {
+		case "https://api.github.com/repos/owner/repo/tags":
+			data := []BranchOrTag{
+				{Name: "v1.2.0", Commit: Commit{Sha: "sha-120"}},
+				{Name: "v1.1.0", Commit: Commit{Sha: "sha-110"}},
+				{Name: "v1.0.0", Commit: Commit{Sha: "sha-100"}},
+			}
+			b, err = json.Marshal(data)
+		default:
+			if strings.Contains(req.URL.String(), "/commits/sha-120") {
+				payload := map[string]any{
+					"commit": map[string]any{
+						"committer": map[string]any{
+							"date": fresh,
+						},
+					},
+				}
+				b, err = json.Marshal(payload)
+			} else {
+				return nil, fmt.Errorf("unexpected URL: %s", req.URL.String())
+			}
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(b)),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	withHTTPClientTransport(customTransport, func() {
+		resolver := SHAResolver{cache: map[string]string{}}
+		got, err := resolver.ResolveNext("owner/repo", "v1.1.0", 24)
+		if err != nil {
+			t.Fatalf("ResolveNext() returned error: %v", err)
+		}
+
+		if !got.UnderCooldown {
+			t.Fatalf("ResolveNext() underCooldown = false; want true")
+		}
+	})
 }
 
 // --- Tests for SHAResolver.resolve ---
@@ -407,5 +545,54 @@ func TestGetRefList(t *testing.T) {
 				t.Errorf("unexpected error message: %v", err)
 			}
 		})
+	})
+
+	t.Run("non-2xx status", func(t *testing.T) {
+		customTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			errorJSON := []byte(`{"message":"API rate limit exceeded"}`)
+			return &http.Response{
+				StatusCode: http.StatusForbidden,
+				Body:       io.NopCloser(bytes.NewReader(errorJSON)),
+				Header:     make(http.Header),
+			}, nil
+		})
+
+		withHTTPClientTransport(customTransport, func() {
+			_, err := GetRefList("owner/repo")
+			if err == nil {
+				t.Fatal("expected error for non-2xx status, got nil")
+			}
+			if !strings.Contains(err.Error(), "http status 403") {
+				t.Fatalf("expected status in error, got: %v", err)
+			}
+			if !strings.Contains(err.Error(), "owner/repo") {
+				t.Fatalf("expected action in error, got: %v", err)
+			}
+		})
+	})
+}
+
+func TestGetRefList_UsesGitHubTokenWhenPresent(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "test-token")
+
+	customTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		authHeader := req.Header.Get("Authorization")
+		if authHeader != "Bearer test-token" {
+			t.Fatalf("authorization header = %q; want %q", authHeader, "Bearer test-token")
+		}
+
+		b := []byte(`[]`)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(b)),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	withHTTPClientTransport(customTransport, func() {
+		_, err := GetRefList("owner/repo")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 	})
 }

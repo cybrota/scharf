@@ -120,6 +120,43 @@ scharf lookup owner/repo@version
 # Ex: scharf lookup actions/checkout@v4
 ```
 
+### 6. Upgrade a Single Pinned Action SHA
+To move from one pinned version to the next available version:
+```sh
+scharf upgrade owner/repo@version
+# Ex: scharf upgrade actions/checkout@v4
+```
+
+If your input is already a SHA, provide the current version context:
+```sh
+scharf upgrade owner/repo@<sha> --from-version v4
+```
+
+Control cool-down warnings (default is 24h):
+```sh
+scharf upgrade actions/checkout@v4 --cooldown-hours 24
+```
+
+Preview output without applying changes:
+```sh
+scharf upgrade actions/checkout@v4 --dry-run
+```
+
+### 7. Upgrade All Scharf-Formatted Pinned SHAs
+To upgrade all existing Scharf-managed pinned references in workflows:
+```sh
+scharf upgrade-all-sha .
+```
+
+Preview all planned upgrades:
+```sh
+scharf upgrade-all-sha . --cooldown-hours 24 --dry-run
+```
+
+Notes:
+- This command only upgrades references in Scharf format: `owner/repo@<sha> # <version>`
+- Mutable references (such as `@v4`, `@main`) are not changed by this command; use `scharf autofix` for those.
+
 ## CI Integration
 
 Embed Scharf in your GitHub Actions workflow to enforce secure references automatically:

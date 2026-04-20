@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/cybrota/scharf/logging"
@@ -34,6 +36,40 @@ Copyright (c) 2025 Naren Yellavula & Cybrota contributors - https://github.com/c
 `
 
 var logger = logging.GetLogger(0)
+
+const defaultUpgradeCooldownHours = 24
+
+var actionSHAInputRegex = regexp.MustCompile(`^[\w.-]+/[\w.-]+@[a-f0-9]{40}$`)
+
+func isSHAUpgradeInput(input string) bool {
+	return actionSHAInputRegex.MatchString(input)
+}
+
+func splitActionRef(input string) (string, string, error) {
+	parts := strings.SplitN(input, "@", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("invalid action format: %s. expected owner/repo@ref-or-sha", input)
+	}
+
+	return parts[0], parts[1], nil
+}
+
+func validateUpgradeInput(input string, fromVersion string) error {
+	if _, _, err := splitActionRef(input); err != nil {
+		return err
+	}
+
+	if isSHAUpgradeInput(input) && strings.TrimSpace(fromVersion) == "" {
+		return fmt.Errorf("input %q looks like a pinned SHA; please provide --from-version to resolve the next upgrade", input)
+	}
+
+	return nil
+}
+
+func addSharedUpgradeFlags(cmd *cobra.Command) {
+	cmd.Flags().Int("cooldown-hours", defaultUpgradeCooldownHours, "Warn when next version is under cooldown age in hours")
+	cmd.Flags().Bool("dry-run", false, "Preview changes without writing files")
+}
 
 func writeToJSON(inv *sc.Inventory) {
 	f, _ := os.Create("findings.json")
@@ -197,6 +233,84 @@ func main() {
 			}
 		},
 	}
+
+	var cmdUpgrade = &cobra.Command{
+		Use:   "upgrade <owner/repo@ref-or-sha>",
+		Short: "⬆️ Upgrade a pinned action to the next version and SHA",
+		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `⬆️ Upgrade a pinned action to the next version and SHA. Ex: scharf upgrade actions/checkout@v4`),
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			input := args[0]
+			fromVersion, _ := cmd.Flags().GetString("from-version")
+			cooldownHours, _ := cmd.Flags().GetInt("cooldown-hours")
+			isDryRun, _ := cmd.Flags().GetBool("dry-run")
+
+			if err := validateUpgradeInput(input, fromVersion); err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+
+			action, refOrSHA, err := splitActionRef(input)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+
+			currentVersion := refOrSHA
+			if isSHAUpgradeInput(input) {
+				currentVersion = fromVersion
+			}
+
+			resolver := nw.NewSHAResolver()
+			result, err := resolver.ResolveNext(action, currentVersion, cooldownHours)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+
+			if result.UnderCooldown {
+				fmt.Printf("%sWarning:%s %s@%s is under cooldown; proceeding with upgrade\n", sc.Yellow, sc.Reset, action, currentVersion)
+			}
+
+			upgradedPin := fmt.Sprintf("%s@%s # %s", action, result.NextSHA, result.NextVersion)
+			if isDryRun {
+				fmt.Printf("Dry-run: planned upgrade %s -> %s\n", input, upgradedPin)
+				return
+			}
+
+			fmt.Println(upgradedPin)
+		},
+	}
+
+	var cmdUpgradeAllSHA = &cobra.Command{
+		Use:   "upgrade-all-sha [repo|url]",
+		Short: "⬆️ Upgrade all Scharf-formatted pinned SHAs in workflows",
+		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `⬆️ Upgrade all Scharf-formatted pinned SHAs in workflows for a local repo or remote URL`),
+		Args:  cobra.MaximumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			cooldownHours, _ := cmd.Flags().GetInt("cooldown-hours")
+			isDryRun, _ := cmd.Flags().GetBool("dry-run")
+
+			then := time.Now()
+			rp, err := sc.BuildRepoPath("upgrade-all-sha", args)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+
+			if err := sc.UpgradePinnedSHAs(*rp, cooldownHours, isDryRun); err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+
+			now := time.Now()
+			di := now.Sub(then)
+			fmt.Printf("Total time: %.2f s\n", di.Seconds())
+		},
+	}
+	addSharedUpgradeFlags(cmdUpgrade)
+	addSharedUpgradeFlags(cmdUpgradeAllSHA)
+	cmdUpgrade.Flags().String("from-version", "", "Current version to upgrade from when input is owner/repo@<sha>")
 	cmdFind.PersistentFlags().String("root", ".", "Absolute path of root directory of GitHub repositories")
 	cmdFind.PersistentFlags().String("out", "json", "Output format of findings. Available options: json, csv")
 	cmdFind.PersistentFlags().Bool("head-only", false, "Limit scan only to HEAD (Activated branch)")
@@ -237,6 +351,6 @@ func main() {
 	}
 
 	var rootCmd = &cobra.Command{Use: "scharf", Long: asciiLogo}
-	rootCmd.AddCommand(cmdLookup, cmdFind, cmdList, cmdAudit, cmdAutoFix)
+	rootCmd.AddCommand(cmdLookup, cmdFind, cmdList, cmdAudit, cmdAutoFix, cmdUpgrade, cmdUpgradeAllSHA)
 	rootCmd.Execute()
 }
