@@ -16,11 +16,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cybrota/scharf/actcache"
 )
 
 const apiURL = "https://api.github.com/repos"
+const defaultCooldownHours = 24
 
 var homedir, _ = os.UserHomeDir()
 var scharfDir = filepath.Join(homedir, ".scharf")
@@ -101,6 +103,17 @@ type SHAResolver struct {
 	cache map[string]string
 }
 
+// UpgradeResult holds the details needed for pinned SHA upgrade flows.
+type UpgradeResult struct {
+	Action         string
+	CurrentVersion string
+	CurrentSHA     string
+	NextVersion    string
+	NextSHA        string
+	CooldownHours  int
+	UnderCooldown  bool
+}
+
 func NewSHAResolver() *SHAResolver {
 	cache := make(map[string]string)
 
@@ -125,6 +138,109 @@ type Commit struct {
 type BranchOrTag struct {
 	Name   string `json:"name"`
 	Commit Commit `json:"commit"`
+}
+
+type commitLookupResponse struct {
+	Commit struct {
+		Committer struct {
+			Date string `json:"date"`
+		} `json:"committer"`
+	} `json:"commit"`
+}
+
+func nextVersion(tags []string, current string) (string, bool) {
+	for i := range tags {
+		if tags[i] == current && i+1 < len(tags) {
+			return tags[i+1], true
+		}
+	}
+
+	return "", false
+}
+
+func normalizeCooldownHours(cooldownHours int) int {
+	if cooldownHours <= 0 {
+		return defaultCooldownHours
+	}
+
+	return cooldownHours
+}
+
+func isUnderCooldown(tagTime time.Time, cooldownHours int) bool {
+	safeCooldown := normalizeCooldownHours(cooldownHours)
+	return time.Since(tagTime) < time.Duration(safeCooldown)*time.Hour
+}
+
+func fetchCommitTimestamp(action string, sha string) (time.Time, error) {
+	lookupURL := fmt.Sprintf("%s/%s/commits/%s", apiURL, action, sha)
+	resp, err := http.Get(lookupURL)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return time.Time{}, fmt.Errorf("http status: %d", resp.StatusCode)
+	}
+
+	var payload commitLookupResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return time.Time{}, fmt.Errorf("json: %w", err)
+	}
+
+	if payload.Commit.Committer.Date == "" {
+		return time.Time{}, errors.New("commit date is empty")
+	}
+
+	parsed, err := time.Parse(time.RFC3339, payload.Commit.Committer.Date)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("time parse: %w", err)
+	}
+
+	return parsed, nil
+}
+
+// ResolveNext resolves the next version and SHA for an action's current version.
+func (s *SHAResolver) ResolveNext(action string, currentVersion string, cooldownHours int) (*UpgradeResult, error) {
+	refs, err := GetRefList(action)
+	if err != nil {
+		return nil, err
+	}
+
+	tagNames := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		tagNames = append(tagNames, ref.Name)
+	}
+
+	nextVer, found := nextVersion(tagNames, currentVersion)
+	if !found {
+		return nil, fmt.Errorf("no next version found for action: %s from version: %s", action, currentVersion)
+	}
+
+	currentFound, currentSHA := searchTag(refs, currentVersion)
+	if !currentFound {
+		return nil, fmt.Errorf("given version: %s is not found for action: %s", currentVersion, action)
+	}
+
+	nextFound, nextSHA := searchTag(refs, nextVer)
+	if !nextFound {
+		return nil, fmt.Errorf("given version: %s is not found for action: %s", nextVer, action)
+	}
+
+	underCooldown := false
+	if ts, err := fetchCommitTimestamp(action, nextSHA); err == nil {
+		underCooldown = isUnderCooldown(ts, cooldownHours)
+	}
+
+	return &UpgradeResult{
+		Action:         action,
+		CurrentVersion: currentVersion,
+		CurrentSHA:     currentSHA,
+		NextVersion:    nextVer,
+		NextSHA:        nextSHA,
+		CooldownHours:  normalizeCooldownHours(cooldownHours),
+		UnderCooldown:  underCooldown,
+	}, nil
 }
 
 // Resolve fetches list of tags for a given GitHub action and picks SHA commit
