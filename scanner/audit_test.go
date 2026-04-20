@@ -169,6 +169,9 @@ func TestUpgradePinnedSHAsDryRun(t *testing.T) {
 	if !strings.Contains(output, "skipped 1 non-Scharf references") {
 		t.Fatalf("expected summary info for non-Scharf references, got: %s", output)
 	}
+	if !strings.Contains(output, "owner/repo@<40hexsha> # <version>") {
+		t.Fatalf("expected skip reason with expected format in output, got: %s", output)
+	}
 }
 
 func TestUpgradePinnedSHAsWritesFileWhenNotDryRun(t *testing.T) {

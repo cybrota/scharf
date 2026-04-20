@@ -166,7 +166,7 @@ func upgradePinnedSHAsInContent(content []byte, workflowPath string, resolver up
 	}
 
 	if skippedNonScharf > 0 {
-		fmt.Printf("%sInfo:%s skipped %d non-Scharf references in %s\n", Yellow, Reset, skippedNonScharf, workflowPath)
+		fmt.Printf("%sInfo:%s skipped %d non-Scharf references in %s (expected format: owner/repo@<40hexsha> # <version>)\n", Yellow, Reset, skippedNonScharf, workflowPath)
 	}
 
 	if !changed {
