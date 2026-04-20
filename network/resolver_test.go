@@ -180,7 +180,8 @@ func TestSearchTag(t *testing.T) {
 }
 
 func TestNextVersion(t *testing.T) {
-	tags := []string{"v1.0.0", "v1.1.0", "v1.2.0"}
+	// GitHub tags API returns newest first.
+	tags := []string{"v1.2.0", "v1.1.0", "v1.0.0"}
 
 	t.Run("finds immediate next version", func(t *testing.T) {
 		got, found := nextVersion(tags, "v1.1.0")
@@ -189,7 +190,7 @@ func TestNextVersion(t *testing.T) {
 		}
 	})
 
-	t.Run("returns not found when current is last", func(t *testing.T) {
+	t.Run("returns not found when current is newest", func(t *testing.T) {
 		got, found := nextVersion(tags, "v1.2.0")
 		if found || got != "" {
 			t.Fatalf("nextVersion(tags, v1.2.0) = (%s,%v), want (\"\",false)", got, found)
@@ -225,9 +226,9 @@ func TestIsUnderCooldown(t *testing.T) {
 func TestSHAResolver_ResolveNext(t *testing.T) {
 	customTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		data := []BranchOrTag{
-			{Name: "v1.0.0", Commit: Commit{Sha: "sha-100"}},
-			{Name: "v1.1.0", Commit: Commit{Sha: "sha-110"}},
 			{Name: "v1.2.0", Commit: Commit{Sha: "sha-120"}},
+			{Name: "v1.1.0", Commit: Commit{Sha: "sha-110"}},
+			{Name: "v1.0.0", Commit: Commit{Sha: "sha-100"}},
 		}
 
 		b, err := json.Marshal(data)
@@ -270,9 +271,9 @@ func TestSHAResolver_ResolveNext_UnderCooldownFromCommitTimestamp(t *testing.T) 
 		switch req.URL.String() {
 		case "https://api.github.com/repos/owner/repo/tags":
 			data := []BranchOrTag{
-				{Name: "v1.0.0", Commit: Commit{Sha: "sha-100"}},
-				{Name: "v1.1.0", Commit: Commit{Sha: "sha-110"}},
 				{Name: "v1.2.0", Commit: Commit{Sha: "sha-120"}},
+				{Name: "v1.1.0", Commit: Commit{Sha: "sha-110"}},
+				{Name: "v1.0.0", Commit: Commit{Sha: "sha-100"}},
 			}
 			b, err = json.Marshal(data)
 		default:

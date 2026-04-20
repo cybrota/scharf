@@ -150,8 +150,8 @@ type commitLookupResponse struct {
 
 func nextVersion(tags []string, current string) (string, bool) {
 	for i := range tags {
-		if tags[i] == current && i+1 < len(tags) {
-			return tags[i+1], true
+		if tags[i] == current && i > 0 {
+			return tags[i-1], true
 		}
 	}
 
