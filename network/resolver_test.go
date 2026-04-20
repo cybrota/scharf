@@ -547,3 +547,28 @@ func TestGetRefList(t *testing.T) {
 		})
 	})
 }
+
+func TestGetRefList_UsesGitHubTokenWhenPresent(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "test-token")
+
+	customTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		authHeader := req.Header.Get("Authorization")
+		if authHeader != "Bearer test-token" {
+			t.Fatalf("authorization header = %q; want %q", authHeader, "Bearer test-token")
+		}
+
+		b := []byte(`[]`)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(b)),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	withHTTPClientTransport(customTransport, func() {
+		_, err := GetRefList("owner/repo")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}

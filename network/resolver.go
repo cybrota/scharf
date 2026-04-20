@@ -81,10 +81,23 @@ func makeAPIEndpoint(action string, version string) string {
 	return lookupURL
 }
 
+func githubAPIGet(lookupURL string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, lookupURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("request: %w", err)
+	}
+
+	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	return http.DefaultClient.Do(req)
+}
+
 // GetRefList takes an action and returns a list of matching tags
 func GetRefList(action string) ([]BranchOrTag, error) {
 	lookupURL := fmt.Sprintf("%s/%s/tags", apiURL, action)
-	resp, err := http.Get(lookupURL)
+	resp, err := githubAPIGet(lookupURL)
 	if err != nil {
 		return []BranchOrTag{}, fmt.Errorf("http: %w", err)
 	}
@@ -173,7 +186,7 @@ func isUnderCooldown(tagTime time.Time, cooldownHours int) bool {
 
 func fetchCommitTimestamp(action string, sha string) (time.Time, error) {
 	lookupURL := fmt.Sprintf("%s/%s/commits/%s", apiURL, action, sha)
-	resp, err := http.Get(lookupURL)
+	resp, err := githubAPIGet(lookupURL)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("http: %w", err)
 	}
@@ -260,7 +273,7 @@ func (s *SHAResolver) Resolve(action string) (string, error) {
 
 	url := makeAPIEndpoint(actionBase, version)
 
-	resp, err := http.Get(url)
+	resp, err := githubAPIGet(url)
 	if err != nil {
 		return "", fmt.Errorf("http: %w", err)
 	}

@@ -124,6 +124,7 @@ func UpgradePinnedSHAs(path FilePath, cooldownHours int, isDryRun bool) error {
 func upgradePinnedSHAsInContent(content []byte, workflowPath string, resolver upgradeResolver, cooldownHours int, isDryRun bool) ([]byte, bool) {
 	lines := strings.Split(string(content), "\n")
 	changed := false
+	skippedNonScharf := 0
 
 	for i := range lines {
 		if !strings.Contains(lines[i], "uses:") {
@@ -132,7 +133,7 @@ func upgradePinnedSHAsInContent(content []byte, workflowPath string, resolver up
 
 		parsed, ok := ParsePinnedRef(lines[i])
 		if !ok {
-			fmt.Printf("%sWarning:%s skipping non-Scharf ref at %s:%d\n", Yellow, Reset, workflowPath, i+1)
+			skippedNonScharf++
 			continue
 		}
 
@@ -162,6 +163,10 @@ func upgradePinnedSHAsInContent(content []byte, workflowPath string, resolver up
 		lines[i] = strings.Replace(lines[i], fromRef, toRef, 1)
 		changed = true
 		fmt.Printf("Updated %s:%d %s -> %s\n", workflowPath, i+1, fromRef, toRef)
+	}
+
+	if skippedNonScharf > 0 {
+		fmt.Printf("%sInfo:%s skipped %d non-Scharf references in %s\n", Yellow, Reset, skippedNonScharf, workflowPath)
 	}
 
 	if !changed {

@@ -166,8 +166,8 @@ func TestUpgradePinnedSHAsDryRun(t *testing.T) {
 	if !strings.Contains(output, "Dry-run") {
 		t.Fatalf("expected dry-run output, got: %s", output)
 	}
-	if !strings.Contains(output, "skipping non-Scharf ref") {
-		t.Fatalf("expected warning for non-Scharf references, got: %s", output)
+	if !strings.Contains(output, "skipped 1 non-Scharf references") {
+		t.Fatalf("expected summary info for non-Scharf references, got: %s", output)
 	}
 }
 
