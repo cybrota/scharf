@@ -279,6 +279,7 @@ func newRootCmd() *cobra.Command {
 			if err := validateUpgradeInput(input, fromVersion); err != nil {
 				cmd.SetOut(cmd.ErrOrStderr())
 				_ = cmd.Usage()
+				cmd.SilenceUsage = true
 				return err
 			}
 
@@ -286,6 +287,7 @@ func newRootCmd() *cobra.Command {
 			if err != nil {
 				cmd.SetOut(cmd.ErrOrStderr())
 				_ = cmd.Usage()
+				cmd.SilenceUsage = true
 				return err
 			}
 
