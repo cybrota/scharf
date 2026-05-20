@@ -394,8 +394,19 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 
-	var rootCmd = &cobra.Command{Use: "scharf", Long: asciiLogo, Version: cliVersion()}
-	rootCmd.SetVersionTemplate("{{.Version}}\n")
+	var rootCmd = &cobra.Command{
+		Use:  "scharf",
+		Long: asciiLogo,
+		Run: func(cmd *cobra.Command, args []string) {
+			showVersion, _ := cmd.Flags().GetBool("version")
+			if showVersion {
+				fmt.Fprintln(cmd.OutOrStdout(), cliVersion())
+				return
+			}
+			_ = cmd.Help()
+		},
+	}
+	rootCmd.Flags().BoolP("version", "V", false, "Print Scharf version information")
 	rootCmd.AddCommand(cmdLookup, cmdFind, cmdList, cmdAudit, cmdAutoFix, cmdUpgrade, cmdUpgradeAllSHA, cmdVersion)
 
 	return rootCmd
