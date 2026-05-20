@@ -41,7 +41,7 @@ func TestUpgradeSHAWithoutFromVersionShowsUsage(t *testing.T) {
 
 func TestVersionInfoExposedOnCLI(t *testing.T) {
 	var expected string
-	for _, args := range [][]string{{"--version"}, {"version"}} {
+	for _, args := range [][]string{{"--version"}, {"version"}, {"-V"}} {
 		stdout, stderr, err := executeRoot(args...)
 		if err != nil {
 			t.Fatalf("unexpected error for %v: %v (stderr: %s)", args, err, stderr)

@@ -406,7 +406,7 @@ func newRootCmd() *cobra.Command {
 			_ = cmd.Help()
 		},
 	}
-	rootCmd.Flags().BoolP("version", "v", false, "Print Scharf version information")
+	rootCmd.Flags().BoolP("version", "V", false, "Print Scharf version information")
 	rootCmd.AddCommand(cmdLookup, cmdFind, cmdList, cmdAudit, cmdAutoFix, cmdUpgrade, cmdUpgradeAllSHA, cmdVersion)
 
 	return rootCmd
