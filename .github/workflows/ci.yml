@@ -18,6 +18,8 @@ jobs:
 
       - name: Audit GitHub actions
         uses: cybrota/scharf-action@c0d0eb13ca383e5a3ec947d754f61c9e61fab5ba
+        env:
+          SCHARF_VERSION: v1.3.1
         with:
           raise-error: true
 
