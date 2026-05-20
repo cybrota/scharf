@@ -1,0 +1,167 @@
+{:project "Scharf"
+ :repository "github.com/cybrota/scharf"
+ :version "0.1.0"
+ :language :go
+ :go-version "1.25.0"
+ :summary
+ "Go CLI that audits GitHub Actions workflows for mutable third-party action references, pins them to immutable SHAs, and upgrades Scharf-managed pinned SHAs."
+
+ :preamble
+ "Small Go CLI repository. Prefer simple package-level changes, keep command wiring in main.go, keep GitHub/network behavior behind network and scanner helpers, and preserve the existing Scharf pin format `owner/repo@<sha> # <version>`."
+
+ :entrypoints
+ [{:id :cli
+   :path "main.go"
+   :description "Cobra command tree and user-facing CLI behavior"}
+  {:id :module
+   :path "go.mod"
+   :description "Go module github.com/cybrota/scharf"}]
+
+ :commands
+ {:deps-download "go mod download"
+  :deps-tidy "go mod tidy"
+  :format "gofmt -w ."
+  :test "go test ./..."
+  :test-verbose "go test -v ./..."
+  :test-package "go test ./scanner"
+  :vet "go vet ./..."
+  :vulncheck "govulncheck ./..."
+  :build "go build ./..."
+  :build-cli "go build -o scharf ."
+  :run-audit "go run . audit ."
+  :run-audit-raise-error "go run . audit . --raise-error"
+  :run-autofix-dry-run "go run . autofix . --dry-run"
+  :run-upgrade-all-dry-run "go run . upgrade-all-sha . --dry-run"
+  :release-snapshot "goreleaser release --snapshot --clean"
+  :security-semgrep "semgrep scan"}
+
+ :verified-commands
+ [{:name :test
+   :command "go test ./..."
+   :description "Primary local and CI test suite"}
+  {:name :vet
+   :command "go vet ./..."
+   :description "Required by AGENTS.md before commits"}
+  {:name :vulncheck
+   :command "govulncheck ./..."
+   :description "Required security check; install golang.org/x/vuln/cmd/govulncheck if missing"}
+  {:name :format
+   :command "gofmt -w ."
+   :description "Formatter for Go source files"}
+  {:name :build
+   :command "go build ./..."
+   :description "Compile all packages"}]
+
+ :cli
+ {:binary "scharf"
+  :commands
+  [{:name "audit"
+    :example "go run . audit ."
+    :description "Scan a local or remote Git repository for mutable GitHub Action references"}
+   {:name "autofix"
+    :example "go run . autofix . --dry-run"
+    :description "Rewrite mutable workflow action refs to immutable SHAs; use --dry-run before writing"}
+   {:name "find"
+    :example "go run . find --root /path/to/workspace --out csv"
+    :description "Scan multiple repositories under a workspace and write findings.csv or findings.json"}
+   {:name "list"
+    :example "go run . list actions/checkout"
+    :description "List tags and SHAs for a GitHub Action repository"}
+   {:name "lookup"
+    :example "go run . lookup actions/checkout@v4"
+    :description "Resolve one action ref to its commit SHA"}
+   {:name "upgrade"
+    :example "go run . upgrade actions/checkout@v4 --dry-run"
+    :description "Compute the next tag/SHA for one action ref"}
+   {:name "upgrade-all-sha"
+    :example "go run . upgrade-all-sha . --dry-run"
+    :description "Upgrade Scharf-formatted pinned SHA refs in workflow files"}]}
+
+ :modules
+ [{:id :cli
+   :path "main.go"
+   :tests ["main_test.go"]
+   :responsibility "Cobra command setup, CLI flags, output file writers, version display, and high-level orchestration"}
+  {:id :scanner
+   :path "scanner/**"
+   :tests ["scanner/*_test.go"]
+   :responsibility "Workflow discovery, mutable-ref scanning, audit formatting, autofix replacement, and pinned-SHA upgrade flows"}
+  {:id :network
+   :path "network/**"
+   :tests ["network/*_test.go"]
+   :responsibility "GitHub API calls, action ref resolution, tag listing, next-version lookup, cooldown checks, and optional GITHUB_TOKEN auth"}
+  {:id :git
+   :path "git/**"
+   :tests ["git/*_test.go"]
+   :responsibility "Local Git repository inspection, branch enumeration, and remote clone-to-temp helpers"}
+  {:id :actcache
+   :path "actcache/**"
+   :tests ["actcache/*_test.go"]
+   :responsibility "Scharf cache file handling under ~/.scharf/cache.json"}
+  {:id :logging
+   :path "logging/**"
+   :tests ["logging/*_test.go" "logging/loggging_test.go"]
+   :responsibility "Shared logger construction"}
+  {:id :ci
+   :path ".github/workflows/**"
+   :responsibility "Pinned GitHub Actions CI, release, and security scans"}
+  {:id :release
+   :path ".goreleaser.yaml"
+   :responsibility "Cross-platform release build configuration"}
+  {:id :docs
+   :path "docs/**"
+   :responsibility "Architectural decision records for non-trivial design choices"}]
+
+ :rules
+ [{:type :allow-edit
+   :agent :codex
+   :pattern "**/*.go"}
+  {:type :allow-edit
+   :agent :codex
+   :pattern "**/*.yaml"}
+  {:type :allow-edit
+   :agent :codex
+   :pattern "**/*.yml"}
+  {:type :allow-edit
+   :agent :codex
+   :pattern "**/*.md"}
+  {:type :allow-edit
+   :agent :codex
+   :pattern "**/.gitignore"}
+  {:type :allow-edit
+   :agent :codex
+   :pattern "**/*.sh"}]
+
+ :quality-gates
+ [{:name :required-before-commit
+   :commands [:format :test :vet :vulncheck]}
+  {:name :ci
+   :commands [:deps-download :test]}
+  {:name :security
+   :commands [:security-semgrep :vulncheck]}]
+
+ :conventions
+ {:branch-names "Use type/short-topic, for example feat/add-s3-backup."
+  :comments "Comment why a non-obvious behavior exists; avoid restating what the code says."
+  :errors "Wrap lower-level errors with context using fmt.Errorf and %w where callers need the original error."
+  :github-actions "Keep third-party actions pinned to immutable SHAs with version comments."
+  :remote-audit "audit, autofix, and upgrade-all-sha may clone remote repositories into /tmp/scharf-repo-*."
+  :cache "Resolver cache lives at ~/.scharf/cache.json and may affect local CLI behavior."}
+
+ :external-services
+ [{:name :github-api
+   :base-url "https://api.github.com/repos"
+   :env ["GITHUB_TOKEN"]
+   :used-by [:network]
+   :notes "Use GITHUB_TOKEN for authenticated requests when rate limits matter."}]
+
+ :artifacts
+ [{:path "findings.csv"
+   :producer "scharf find --out csv"
+   :notes "Generated report; avoid committing unless intentionally updating examples"}
+  {:path "findings.json"
+   :producer "scharf find --out json"
+   :notes "Generated report; avoid committing unless intentionally updating examples"}
+  {:path "scharf"
+   :producer "go build -o scharf ."
+   :notes "Local binary; should remain ignored/untracked"}]}
