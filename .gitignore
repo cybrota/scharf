@@ -32,3 +32,4 @@ dist
 .clj-kondo
 .DS_Store
 .lsp
+version.json
