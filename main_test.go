@@ -40,6 +40,7 @@ func TestUpgradeSHAWithoutFromVersionShowsUsage(t *testing.T) {
 }
 
 func TestVersionInfoExposedOnCLI(t *testing.T) {
+	var expected string
 	for _, args := range [][]string{{"--version"}, {"version"}} {
 		stdout, stderr, err := executeRoot(args...)
 		if err != nil {
@@ -48,6 +49,16 @@ func TestVersionInfoExposedOnCLI(t *testing.T) {
 
 		if !strings.Contains(stdout, "commit") || !strings.Contains(stdout, "built") {
 			t.Fatalf("stdout = %q; want version details including commit and build metadata", stdout)
+		}
+		if !strings.HasPrefix(stdout, "version: ") {
+			t.Fatalf("stdout = %q; want direct version output without Cobra prefix", stdout)
+		}
+		if expected == "" {
+			expected = stdout
+			continue
+		}
+		if stdout != expected {
+			t.Fatalf("stdout for %v = %q; want %q", args, stdout, expected)
 		}
 	}
 }
