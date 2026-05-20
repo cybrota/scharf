@@ -13,6 +13,12 @@ before:
   hooks:
     # You may remove this if you don't use go modules.
     - go mod tidy
+    - >-
+      sh -c 'printf "%s\n" "{"
+      "  \"version\": \"{{ .Version }}\","
+      "  \"commit\": \"{{ .FullCommit }}\","
+      "  \"date\": \"{{ .Date }}\""
+      "}" > version.json'
     # you may remove this if you don't need go generate
     - go generate ./...
 

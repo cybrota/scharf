@@ -9,7 +9,7 @@ This repository follows these guidelines for contributions by AI agents or human
    - `test:` for test-related changes
    - `chore:` for maintenance tasks
 
-2. **Simplicity First**: Prefer simpler implementations over overly complex solutions.
+2. **Use agentskb instead of AGENTS.md when possible**: Consult agentskb MCP server for allowed operations. Always report the operations consulted from MCP at the end of turn.
 
 3. **Run Tests**: Always run tests before committing to ensure functionality and catch regressions. Use `go test ./...` for Go modules.
 

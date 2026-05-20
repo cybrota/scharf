@@ -9,6 +9,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -38,6 +39,36 @@ Copyright (c) 2025 Naren Yellavula & Cybrota contributors - https://github.com/c
 var logger = logging.GetLogger(0)
 
 const defaultUpgradeCooldownHours = 24
+
+//go:embed version.json
+var versionJSON []byte
+
+type versionInfo struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+	Date    string `json:"date"`
+}
+
+func cliVersion() string {
+	info := versionInfo{
+		Version: "dev",
+		Commit:  "unknown",
+		Date:    "unknown",
+	}
+	if err := json.Unmarshal(versionJSON, &info); err != nil {
+		return "version: dev (commit: unknown, built: unknown)"
+	}
+	if info.Version == "" {
+		info.Version = "dev"
+	}
+	if info.Commit == "" {
+		info.Commit = "unknown"
+	}
+	if info.Date == "" {
+		info.Date = "unknown"
+	}
+	return fmt.Sprintf("version: %s (commit: %s, built: %s)", info.Version, info.Commit, info.Date)
+}
 
 var actionSHAInputRegex = regexp.MustCompile(`^[\w.-]+/[\w.-]+@[a-f0-9]{40}$`)
 
@@ -106,7 +137,7 @@ func WriteToCSV(inv *sc.Inventory) {
 	csv_writer.WriteAll(writeRows)
 }
 
-func main() {
+func newRootCmd() *cobra.Command {
 	// list table configuration
 	tw := tablewriter.NewWriter(os.Stdout)
 
@@ -239,21 +270,23 @@ func main() {
 		Short: "⬆️ Upgrade a pinned action to the next version and SHA",
 		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `⬆️ Upgrade a pinned action to the next version and SHA. Ex: scharf upgrade actions/checkout@v4`),
 		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			input := args[0]
 			fromVersion, _ := cmd.Flags().GetString("from-version")
 			cooldownHours, _ := cmd.Flags().GetInt("cooldown-hours")
 			isDryRun, _ := cmd.Flags().GetBool("dry-run")
 
 			if err := validateUpgradeInput(input, fromVersion); err != nil {
-				fmt.Println(err.Error())
-				return
+				cmd.SetOut(cmd.ErrOrStderr())
+				_ = cmd.Usage()
+				return err
 			}
 
 			action, refOrSHA, err := splitActionRef(input)
 			if err != nil {
-				fmt.Println(err.Error())
-				return
+				cmd.SetOut(cmd.ErrOrStderr())
+				_ = cmd.Usage()
+				return err
 			}
 
 			currentVersion := refOrSHA
@@ -264,8 +297,7 @@ func main() {
 			resolver := nw.NewSHAResolver()
 			result, err := resolver.ResolveNext(action, currentVersion, cooldownHours)
 			if err != nil {
-				fmt.Println(err.Error())
-				return
+				return err
 			}
 
 			if result.UnderCooldown {
@@ -275,10 +307,11 @@ func main() {
 			upgradedPin := fmt.Sprintf("%s@%s # %s", action, result.NextSHA, result.NextVersion)
 			if isDryRun {
 				fmt.Printf("Dry-run: planned upgrade %s -> %s\n", input, upgradedPin)
-				return
+				return nil
 			}
 
 			fmt.Println(upgradedPin)
+			return nil
 		},
 	}
 
@@ -350,7 +383,24 @@ func main() {
 		},
 	}
 
-	var rootCmd = &cobra.Command{Use: "scharf", Long: asciiLogo}
-	rootCmd.AddCommand(cmdLookup, cmdFind, cmdList, cmdAudit, cmdAutoFix, cmdUpgrade, cmdUpgradeAllSHA)
-	rootCmd.Execute()
+	var cmdVersion = &cobra.Command{
+		Use:   "version",
+		Short: "Print Scharf version information",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Fprintln(cmd.OutOrStdout(), cliVersion())
+		},
+	}
+
+	var rootCmd = &cobra.Command{Use: "scharf", Long: asciiLogo, Version: cliVersion()}
+	rootCmd.SetVersionTemplate("{{.Version}}\n")
+	rootCmd.AddCommand(cmdLookup, cmdFind, cmdList, cmdAudit, cmdAutoFix, cmdUpgrade, cmdUpgradeAllSHA, cmdVersion)
+
+	return rootCmd
+}
+
+func main() {
+	if err := newRootCmd().Execute(); err != nil {
+		os.Exit(1)
+	}
 }
