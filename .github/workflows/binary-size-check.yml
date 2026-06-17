@@ -1,0 +1,81 @@
+name: Binary Size Check
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare-size:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: stable
+
+      - name: Build current binary
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w" -o dist/scharf .
+
+      - name: Download latest release binary
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_name="scharf_Linux_x86_64.zip"
+          release_api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest"
+          release_json="$RUNNER_TEMP/latest-release.json"
+
+          curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "$release_api" \
+            -o "$release_json"
+
+          latest_tag="$(jq -r '.tag_name' "$release_json")"
+          asset_url="$(jq -r --arg name "$artifact_name" '.assets[] | select(.name == $name) | .browser_download_url' "$release_json")"
+
+          if [ -z "$asset_url" ] || [ "$asset_url" = "null" ]; then
+            echo "Could not find ${artifact_name} in latest release ${latest_tag}." >&2
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/latest-release"
+          curl -fsSL -L \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -o "$RUNNER_TEMP/$artifact_name" \
+            "$asset_url"
+
+          unzip -q -o "$RUNNER_TEMP/$artifact_name" -d "$RUNNER_TEMP/latest-release"
+
+      - name: Compare binary size
+        run: |
+          set -euo pipefail
+          current_binary="dist/scharf"
+          release_binary="$RUNNER_TEMP/latest-release/scharf"
+
+          if [ ! -f "$release_binary" ]; then
+            echo "Latest release binary was not extracted correctly." >&2
+            exit 1
+          fi
+
+          current_size="$(stat -c%s "$current_binary")"
+          release_size="$(stat -c%s "$release_binary")"
+          max_size="$((release_size * 120 / 100))"
+
+          echo "Latest release size: ${release_size} bytes"
+          echo "Current build size: ${current_size} bytes"
+          echo "Allowed max size: ${max_size} bytes"
+
+          if [ "$current_size" -gt "$max_size" ]; then
+            echo "Binary size increased by more than 20% compared to the latest release." >&2
+            exit 1
+          fi
