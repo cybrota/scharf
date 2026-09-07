@@ -7,11 +7,9 @@
 package scanner
 
 import (
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/cybrota/scharf/git"
 	"github.com/cybrota/scharf/logging"
@@ -22,55 +20,87 @@ var logger = logging.GetLogger(0)
 
 const SHA256NotAvailable = "N/A"
 
-// AssembleWorkflow builds printable workflows with structure suitable for formatting
-func AssembleWorkflow(res network.Resolver, content []byte, fileName string, filePath string) (*Workflow, error) {
-	matches, err := ScanContentWithPosition(content, findRegex)
-	if err != nil {
-		return nil, fmt.Errorf("%sThere is a problem scanning the given file%s%s", Yellow, fileName, Reset)
-	}
-	// 4) Map matches -> findings
-	var issues []Finding
-	for _, m := range matches {
-		var fm string
-		// m.Text is something like "actions/checkout@v1.2"
-		parts := strings.SplitN(m.Text, "@", 2)
-		action := parts[0]
-		version := parts[1]
-
-		original := fmt.Sprintf("%s@%s", action, version)
-		msg := fmt.Sprintf("Unpinned GitHub Action: uses `%s`", m.Text)
-		resolvedSHA, err := res.Resolve(original)
-
-		if err != nil {
-			fm = fmt.Sprintf("Reference '%s' is not found on GitHub. Try 'scharf list %s' to see available versions.", version, action)
-			resolvedSHA = SHA256NotAvailable
-		} else {
-			// Build a human-readable message & a suggested fix
-			fm = fmt.Sprintf("Pin `%s` to %s", action, resolvedSHA)
-		}
-
-		issues = append(issues, Finding{
-			Line:        m.Line,
-			Column:      m.Col,
-			Description: msg,
-			FixMsg:      fm,
-			FixSHA:      resolvedSHA,
-			Version:     version,
-			Action:      action,
-			Original:    original,
-		})
-	}
-
-	// 5) Assemble the Workflow
-	return &Workflow{
-		Name:     filePath,
-		FilePath: filePath,
-		Issues:   issues,
-	}, nil
+var newAuditResolver = func() network.Resolver {
+	return network.NewSHAResolver()
 }
 
-// AuditRepository collects inventory details from current Git repository.
+// AssembleWorkflow builds printable workflows with structure suitable for formatting
+func AssembleWorkflow(res network.Resolver, content []byte, fileName string, filePath string) (*Workflow, error) {
+	analysis, err := AnalyzeWorkflow(res, content, fileName, filePath)
+	return &analysis.Workflow, err
+}
+
+// WorkflowAnalysis pairs the v1 report model with structured edit metadata.
+type WorkflowAnalysis struct {
+	Workflow Workflow           `json:"workflow"`
+	Findings []ReferenceFinding `json:"findings"`
+}
+
+// AnalyzeWorkflow resolves mutable references while retaining structured source metadata.
+func AnalyzeWorkflow(res network.Resolver, content []byte, fileName string, filePath string) (*WorkflowAnalysis, error) {
+	findings, scanErr := ScanWorkflowReferences(content, filePath)
+	issues := make([]Finding, 0, len(findings))
+	for i := range findings {
+		var fm string
+		finding := &findings[i]
+		lookup := fmt.Sprintf("%s@%s", finding.Repository, finding.Ref)
+		finding.Description = fmt.Sprintf("Unpinned GitHub Action: uses `%s`", finding.Original)
+		resolvedSHA, err := res.Resolve(lookup)
+
+		if err != nil {
+			fm = fmt.Sprintf("Reference '%s' is not found on GitHub. Try 'scharf list %s' to see available versions.", finding.Ref, finding.Repository)
+			resolvedSHA = SHA256NotAvailable
+		} else {
+			fm = fmt.Sprintf("Pin `%s` to %s", finding.Original, resolvedSHA)
+		}
+		finding.FixMessage = fm
+		finding.FixSHA = resolvedSHA
+		issues = append(issues, finding.legacy())
+	}
+
+	return &WorkflowAnalysis{
+		Workflow: Workflow{Name: filePath, FilePath: filePath, Issues: issues},
+		Findings: findings,
+	}, scanErr
+}
+
+// AuditResult contains findings and any file errors from one repository scan.
+type AuditResult struct {
+	Status    ScanStatus         `json:"status"`
+	Complete  bool               `json:"complete"`
+	Workflows []Workflow         `json:"findings"`
+	Details   []ReferenceFinding `json:"details,omitempty"`
+	Errors    []ScanError        `json:"errors,omitempty"`
+	analyses  []*WorkflowAnalysis
+}
+
+func (result *AuditResult) setStatus() {
+	findingCount := 0
+	for _, workflow := range result.Workflows {
+		findingCount += len(workflow.Issues)
+	}
+	result.Status, result.Complete = scanStatus(findingCount, result.Errors)
+}
+
+// Err returns an aggregate error when one or more files were not scanned.
+func (result *AuditResult) Err() error {
+	if result == nil || len(result.Errors) == 0 {
+		return nil
+	}
+	return &IncompleteScanError{Errors: result.Errors}
+}
+
+// AuditRepository preserves the v1 signature while returning partial workflows with incomplete errors.
 func AuditRepository(path FilePath) (*[]Workflow, error) {
+	result, err := AuditRepositoryResult(path)
+	if result == nil {
+		return nil, err
+	}
+	return &result.Workflows, err
+}
+
+// AuditRepositoryResult returns findings, edit metadata, and explicit completion state.
+func AuditRepositoryResult(path FilePath) (*AuditResult, error) {
 	abs, err := filepath.Abs(filepath.Join(string(path)))
 	if err != nil {
 		logger.Error("failed to find absolute path", "err", err)
@@ -84,47 +114,52 @@ func AuditRepository(path FilePath) (*[]Workflow, error) {
 	// paths := strings.Split(abs, "/")
 	loc := filepath.Join(abs, ".github", "workflows")
 
-	fileNames, err := ListFiles(FilePath(loc))
+	fileNames, err := ListWorkflowFiles(FilePath(loc))
 	if err != nil {
-		return nil, fmt.Errorf("file error: %w", err)
+		result := &AuditResult{Errors: []ScanError{NewScanError(loc, err)}}
+		result.setStatus()
+		return result, result.Err()
 	}
 
-	fmt.Printf("No of workflows: %s%d%s\n\n", Blue, len(fileNames), Reset)
-
-	var wfs []Workflow
-	res := network.NewSHAResolver()
+	result := &AuditResult{}
+	res := newAuditResolver()
 	// Process each file found in the directory.
 	for _, fileName := range fileNames {
-		f := filepath.Join(loc, string(*fileName))
-		content, err := ReadFile(FilePath(f))
+		f := string(fileName)
+		content, err := ReadFile(fileName)
 		if err != nil {
-			if errors.Is(err, syscall.EISDIR) {
-				continue // This is an accidental directory. Move to the next file
-			} else {
-				return nil, fmt.Errorf("file error: %w", err)
-			}
+			result.Errors = append(result.Errors, NewScanError(f, err))
+			continue
 		}
 
-		wf, _ := AssembleWorkflow(res, content, string(*fileName), f)
-		if len(wf.Issues) > 0 {
-			wfs = append(wfs, *wf)
+		analysis, scanErr := AnalyzeWorkflow(res, content, filepath.Base(f), f)
+		if analysis != nil && len(analysis.Workflow.Issues) > 0 {
+			result.Workflows = append(result.Workflows, analysis.Workflow)
+			result.Details = append(result.Details, analysis.Findings...)
+			result.analyses = append(result.analyses, analysis)
+		}
+		if scanErr != nil {
+			result.Errors = append(result.Errors, NewScanError(f, scanErr))
 		}
 	}
 
-	return &wfs, nil
+	result.setStatus()
+	return result, result.Err()
 }
 
 // AutoFixRepository tries to match and replace third-party action references with SHA
 // It uses SHA resolution to find accurate SHA
 func AutoFixRepository(path FilePath, isDryRun bool) error {
-	wfs, err := AuditRepository(path)
+	result, err := AuditRepositoryResult(path)
 	if err != nil {
 		return err
 	}
 
-	for _, wf := range *wfs {
-		fmt.Printf("🪄 Fixing %s%s%s: \n", Cyan, wf.FilePath, Reset)
-		ApplyFixesInFile(wf, isDryRun)
+	for _, analysis := range result.analyses {
+		fmt.Printf("🪄 Fixing %s%s%s: \n", Cyan, analysis.Workflow.FilePath, Reset)
+		if err := ApplyReferenceFixesInFile(analysis.Workflow.FilePath, analysis.Findings, isDryRun); err != nil {
+			return err
+		}
 	}
 
 	if isDryRun {

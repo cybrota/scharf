@@ -96,7 +96,11 @@ func githubAPIGet(lookupURL string) (*http.Response, error) {
 
 // GetRefList takes an action and returns a list of matching tags
 func GetRefList(action string) ([]BranchOrTag, error) {
-	lookupURL := fmt.Sprintf("%s/%s/tags", apiURL, action)
+	return getRefList(action, "tags")
+}
+
+func getRefList(action string, kind string) ([]BranchOrTag, error) {
+	lookupURL := fmt.Sprintf("%s/%s/%s", apiURL, action, kind)
 	resp, err := githubAPIGet(lookupURL)
 	if err != nil {
 		return []BranchOrTag{}, fmt.Errorf("http: %w", err)
@@ -104,7 +108,7 @@ func GetRefList(action string) ([]BranchOrTag, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return []BranchOrTag{}, fmt.Errorf("http status %d for action %s", resp.StatusCode, action)
+		return []BranchOrTag{}, fmt.Errorf("http status %d for action %s %s", resp.StatusCode, action, kind)
 	}
 
 	var b []BranchOrTag
@@ -264,7 +268,7 @@ func (s *SHAResolver) ResolveNext(action string, currentVersion string, cooldown
 	}, nil
 }
 
-// Resolve fetches list of tags for a given GitHub action and picks SHA commit
+// Resolve checks tags before branches because GitHub gives tags precedence for uses refs.
 func (s *SHAResolver) Resolve(action string) (string, error) {
 	// See if SHA can be found in resolver cache
 	if s.cache[action] != "" {
@@ -279,22 +283,20 @@ func (s *SHAResolver) Resolve(action string) (string, error) {
 		version = "main"
 	}
 
-	url := makeAPIEndpoint(actionBase, version)
-
-	resp, err := githubAPIGet(url)
+	tags, err := getRefList(actionBase, "tags")
 	if err != nil {
-		return "", fmt.Errorf("http: %w", err)
+		return "", err
 	}
-	defer resp.Body.Close()
-
-	var b []BranchOrTag
-	if err := json.NewDecoder(resp.Body).Decode(&b); err != nil {
-		return "", fmt.Errorf("json: %w", err)
-	}
-
-	found, sha := searchTag(b, version)
+	found, sha := searchTag(tags, version)
 	if !found {
-		return "", errors.New(fmt.Sprintf("given version: %s is not found for action: %s", version, actionBase))
+		branches, err := getRefList(actionBase, "branches")
+		if err != nil {
+			return "", err
+		}
+		found, sha = searchTag(branches, version)
+	}
+	if !found {
+		return "", fmt.Errorf("given version: %s is not found for action: %s", version, actionBase)
 	}
 
 	// Add SHA to resolver cache for repeated asks
