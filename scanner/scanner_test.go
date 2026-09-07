@@ -24,6 +24,10 @@ import (
 var _ func(FilePath) (*[]Workflow, error) = AuditRepository
 var _ func(string, GitRepository, *regexp.Regexp, string) *Inventory = ScanBranch
 var _ func([]*GitRepository, *regexp.Regexp, bool) (*Inventory, error) = ScanRepos
+var _ func(string, bool) (*Inventory, error) = Find
+var _ func(Workflow, bool) error = ApplyFixesInFile
+var _ = InventoryRecord{"", "", "", nil}
+var _ = Inventory{nil}
 var _ = PinnedRef{"", "", ""}
 var _ = BarePinnedRef{"", ""}
 
@@ -94,6 +98,15 @@ func TestV1FindingAndWorkflowContracts(t *testing.T) {
 	text := string(encoded)
 	if !strings.Contains(text, `"FilePath":"ci.yml"`) || !strings.Contains(text, `"Line":1`) || strings.Contains(text, `"file":`) {
 		t.Fatalf("legacy JSON keys changed: %s", encoded)
+	}
+
+	inventory := Inventory{[]*InventoryRecord{{"repo", "main", "ci.yml", []string{"owner/repo@v1"}}}}
+	encoded, err = json.Marshal(inventory)
+	if err != nil {
+		t.Fatalf("marshal inventory: %v", err)
+	}
+	if got, want := string(encoded), `{"findings":[{"repository_name":"repo","branch_name":"main","actions_file":"ci.yml","matches":["owner/repo@v1"]}]}`; got != want {
+		t.Fatalf("legacy inventory JSON = %s, want %s", got, want)
 	}
 }
 
@@ -174,5 +187,53 @@ func TestScanRepositoriesReadsDistinctBranchTreesWithoutCheckout(t *testing.T) {
 	headResult, err := ScanRepositories([]*GitRepository{scanRepo}, true)
 	if err != nil || headResult.Status != ScanStatusFindings || len(headResult.Records) != 1 || headResult.Records[0].Matches[0] != "owner/master@main" {
 		t.Fatalf("head-only result=%#v err=%v", headResult, err)
+	}
+}
+
+func TestScanRepositoriesIncludesRemoteTrackingBranches(t *testing.T) {
+	repoPath := t.TempDir()
+	repository, err := gitlib.PlainInit(repoPath, false)
+	if err != nil {
+		t.Fatalf("initialize repository: %v", err)
+	}
+	commitWorkflow(t, repoPath, repository, "jobs:\n  test:\n    steps:\n      - uses: owner/local@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n", "local workflow")
+	worktree, _ := repository.Worktree()
+
+	sourceName := plumbing.NewBranchReferenceName("remote-source")
+	if err := worktree.Checkout(&gitlib.CheckoutOptions{Branch: sourceName, Create: true}); err != nil {
+		t.Fatalf("create remote source branch: %v", err)
+	}
+	commitWorkflow(t, repoPath, repository, "jobs:\n  test:\n    steps:\n      - uses: owner/remote@release/2026\n", "remote workflow")
+	remoteCommit, err := repository.Head()
+	if err != nil {
+		t.Fatalf("read remote source commit: %v", err)
+	}
+	if err := worktree.Checkout(&gitlib.CheckoutOptions{Branch: plumbing.NewBranchReferenceName("master")}); err != nil {
+		t.Fatalf("restore master: %v", err)
+	}
+	if err := repository.Storer.RemoveReference(sourceName); err != nil {
+		t.Fatalf("remove local source branch: %v", err)
+	}
+
+	remoteName := plumbing.ReferenceName("refs/remotes/origin/release/2026")
+	if err := repository.Storer.SetReference(plumbing.NewHashReference(remoteName, remoteCommit.Hash())); err != nil {
+		t.Fatalf("create remote-tracking branch: %v", err)
+	}
+	remoteHead := plumbing.ReferenceName("refs/remotes/origin/HEAD")
+	if err := repository.Storer.SetReference(plumbing.NewSymbolicReference(remoteHead, remoteName)); err != nil {
+		t.Fatalf("create symbolic remote HEAD: %v", err)
+	}
+
+	beforeHead, _ := repository.Head()
+	result, err := ScanRepositories([]*GitRepository{{name: "repo", absPath: FilePath(repoPath)}}, false)
+	if err != nil || result.Status != ScanStatusFindings {
+		t.Fatalf("remote scan result=%#v err=%v", result, err)
+	}
+	if len(result.Records) != 1 || result.Records[0].Branch != "remote:origin/release/2026" || result.Records[0].Matches[0] != "owner/remote@release/2026" {
+		t.Fatalf("remote findings = %#v", result.Records)
+	}
+	afterHead, _ := repository.Head()
+	if afterHead.Name() != beforeHead.Name() || afterHead.Hash() != beforeHead.Hash() {
+		t.Fatalf("remote scan changed HEAD from %s to %s", beforeHead, afterHead)
 	}
 }

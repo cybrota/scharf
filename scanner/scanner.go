@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/cybrota/scharf/git"
 	gitlib "github.com/go-git/go-git/v5"
@@ -201,6 +202,30 @@ func ScanRepositories(repos []*GitRepository, headOnly bool) (*InventoryResult, 
 		})
 		if err != nil {
 			inventory.Errors = append(inventory.Errors, NewScanError(string(repo.absPath), fmt.Errorf("iterate Git branches: %w", err)))
+		}
+
+		refs, err := gitRepo.References()
+		if err != nil {
+			inventory.Errors = append(inventory.Errors, NewScanError(string(repo.absPath), fmt.Errorf("list remote Git branches: %w", err)))
+			continue
+		}
+		err = refs.ForEach(func(ref *plumbing.Reference) error {
+			const remotePrefix = "refs/remotes/"
+			name := ref.Name().String()
+			if ref.Type() != plumbing.HashReference || !strings.HasPrefix(name, remotePrefix) {
+				return nil
+			}
+			remoteName := strings.TrimPrefix(name, remotePrefix)
+			if strings.HasSuffix(remoteName, "/HEAD") {
+				return nil
+			}
+			branchResult := scanGitTree("remote:"+remoteName, *repo, gitRepo, ref.Hash())
+			inventory.Records = append(inventory.Records, branchResult.Records...)
+			inventory.Errors = append(inventory.Errors, branchResult.Errors...)
+			return nil
+		})
+		if err != nil {
+			inventory.Errors = append(inventory.Errors, NewScanError(string(repo.absPath), fmt.Errorf("iterate remote Git branches: %w", err)))
 		}
 	}
 	inventory.setStatus()

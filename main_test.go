@@ -281,7 +281,7 @@ func TestMachineOutputsExposeIncompleteStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse CSV: %v", err)
 	}
-	if len(rows) != 3 || rows[0][0] != "repository_name" || rows[0][3] != "action" ||
+	if len(rows) != 3 || strings.Join(rows[0][:4], ",") != "repository_name,branch_name,actions_file,action" ||
 		rows[1][0] != "workspace/repo" || rows[1][3] != "owner/repo@main" || rows[1][4] != "incomplete" || rows[1][5] != "finding" ||
 		rows[2][4] != "incomplete" || rows[2][5] != "error" || rows[2][11] != "invalid YAML" {
 		t.Fatalf("CSV output does not expose incomplete state: %#v", rows)

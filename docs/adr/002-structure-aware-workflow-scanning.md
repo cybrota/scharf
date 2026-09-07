@@ -14,7 +14,7 @@ Mutable references are all syntactically valid external references except full 4
 
 Preserve the v1 structs and function signatures as compatibility wrappers while exposing structured findings and completion state through new APIs. Treat mutable references expressed through YAML aliases, anchors, or block scalars as findings in an incomplete scan because their source spans are not safe to edit.
 
-Scan all local branches directly from their Git commit trees without checking them out; `--head-only` continues to inspect the current working tree. Resolve GitHub references by exact tag name before exact branch name, matching GitHub's tag precedence while supporting branch names containing slashes.
+Scan local and remote-tracking branches directly from their Git commit trees without checking them out; label remote results as `remote:<remote>/<branch>` and skip symbolic remote HEAD refs. `--head-only` continues to inspect the current working tree. Resolve GitHub references by exact tag name before exact branch name, matching GitHub's tag precedence while supporting branch names containing slashes.
 
 ## Consequences
 
