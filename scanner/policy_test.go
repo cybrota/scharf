@@ -185,6 +185,24 @@ func TestEvaluatePolicyChangedLinesAndIncompleteOutcome(t *testing.T) {
 	}
 }
 
+func TestChangedLineEnforcementOverridesBaselineSuppression(t *testing.T) {
+	audit := auditResultWithFindings(ReferenceFinding{
+		FilePath: "/repo/.github/workflows/ci.yml", Repository: "owner/repo", Ref: "main", Original: "owner/repo@main",
+	})
+	policy := DefaultPolicy()
+	policy.Baseline = PolicyBaseline{Ref: "origin/main", Mode: "new"}
+	report, err := EvaluatePolicy("/repo", audit, policy, PolicyEvaluationOptions{
+		ChangedLinesOnly: true,
+		Classifications:  []FindingClassification{{Classified: true, New: false, Changed: true}},
+	})
+	if err != nil {
+		t.Fatalf("EvaluatePolicy returned error: %v", err)
+	}
+	if report.Findings[0].State != PolicyFindingViolation || !report.Findings[0].Blocking {
+		t.Fatalf("changed baseline finding was suppressed: %#v", report.Findings[0])
+	}
+}
+
 func TestEvaluatePolicyDisallowsCLIIgnores(t *testing.T) {
 	allow := false
 	policy := DefaultPolicy()

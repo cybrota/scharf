@@ -10,6 +10,7 @@ package git
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,6 +128,11 @@ func IsGitRepo(path string) bool {
 // CloneRepoToTemp clones the given GitHub repository URL (https:// or ssh:// or git@...)
 // into a newly-created temporary directory under /tmp and returns the local path.
 func CloneRepoToTemp(repoURL string) (string, error) {
+	return CloneRepoToTempWithWriter(repoURL, os.Stderr)
+}
+
+// CloneRepoToTempWithWriter clones a repository while keeping progress off machine-output stdout.
+func CloneRepoToTempWithWriter(repoURL string, diagnostic io.Writer) (string, error) {
 	tmpDir, err := os.MkdirTemp("/tmp", "scharf-repo-*")
 	if err != nil {
 		return "", fmt.Errorf("creating temp dir: %w", err)
@@ -141,19 +147,19 @@ func CloneRepoToTemp(repoURL string) (string, error) {
 			repoURL,
 			tmpDir,
 		)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = diagnostic
+		cmd.Stderr = diagnostic
 		if err := cmd.Run(); err == nil {
 			return tmpDir, nil
 		}
 		// if native clone failed, we'll fall back
-		fmt.Fprintf(os.Stderr, "native git clone failed: %v; falling back to go-git\n", err)
+		fmt.Fprintf(diagnostic, "native git clone failed: %v; falling back to go-git\n", err)
 	}
 
 	// 2) If native Git is not available, use go-git shallow clone
 	opts := &git.CloneOptions{
 		URL:          repoURL,
-		Progress:     os.Stdout,
+		Progress:     diagnostic,
 		Depth:        1,    // <-- shallow
 		SingleBranch: true, // <-- single branch
 	}

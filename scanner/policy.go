@@ -177,21 +177,24 @@ func LoadPolicy(filePath string) (*Policy, error) {
 		return nil, fmt.Errorf("open policy %s: %w", filePath, err)
 	}
 	defer func() { _ = file.Close() }()
+	return decodePolicy(file, filePath)
+}
 
-	decoder := yaml.NewDecoder(file)
+func decodePolicy(reader io.Reader, source string) (*Policy, error) {
+	decoder := yaml.NewDecoder(reader)
 	decoder.KnownFields(true)
 	var policy Policy
 	if err := decoder.Decode(&policy); err != nil {
-		return nil, fmt.Errorf("parse policy %s: %w", filePath, err)
+		return nil, fmt.Errorf("parse policy %s: %w", source, err)
 	}
 	var extra yaml.Node
 	if err := decoder.Decode(&extra); err == nil {
-		return nil, fmt.Errorf("parse policy %s: multiple YAML documents are not supported", filePath)
+		return nil, fmt.Errorf("parse policy %s: multiple YAML documents are not supported", source)
 	} else if !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("parse policy %s: %w", filePath, err)
+		return nil, fmt.Errorf("parse policy %s: %w", source, err)
 	}
 	if err := policy.validate(); err != nil {
-		return nil, fmt.Errorf("invalid policy %s: %w", filePath, err)
+		return nil, fmt.Errorf("invalid policy %s: %w", source, err)
 	}
 	return &policy, nil
 }
@@ -352,6 +355,9 @@ func EvaluatePolicy(repoRoot string, audit *AuditResult, policy *Policy, options
 		Errors:      append([]ScanError(nil), audit.Errors...),
 		Findings:    make([]EvaluatedFinding, 0, len(details)),
 	}
+	for i := range report.Errors {
+		report.Errors[i].FilePath = repositoryRelativePath(repoRoot, report.Errors[i].FilePath)
+	}
 	for i, finding := range details {
 		classification := FindingClassification{New: true, Changed: true}
 		if len(options.Classifications) > 0 {
@@ -422,19 +428,25 @@ func evaluateFinding(repoRoot string, finding ReferenceFinding, classification F
 			return evaluated
 		}
 	}
-	if policy.Baseline.Mode == "new" && classification.Classified && !classification.New {
+	if changedLinesOnly && classification.Classified {
+		if !classification.Changed {
+			evaluated.State = PolicyFindingUnchanged
+			evaluated.Message = fmt.Sprintf("Mutable reference %s is outside changed lines and is non-blocking.", finding.Original)
+			return evaluated
+		}
+	} else if policy.Baseline.Mode == "new" && classification.Classified && !classification.New {
 		evaluated.State = PolicyFindingBaseline
 		evaluated.Message = fmt.Sprintf("Existing baseline violation %s is visible but non-blocking.", finding.Original)
-		return evaluated
-	}
-	if changedLinesOnly && classification.Classified && !classification.Changed {
-		evaluated.State = PolicyFindingUnchanged
-		evaluated.Message = fmt.Sprintf("Mutable reference %s is outside changed lines and is non-blocking.", finding.Original)
 		return evaluated
 	}
 
 	evaluated.State = PolicyFindingViolation
 	evaluated.Blocking = rule.Severity == "error"
+	if finding.Original == "" && finding.Description != "" {
+		evaluated.Message = finding.Description
+		evaluated.Remediation = finding.FixMessage
+		return evaluated
+	}
 	evaluated.Message = fmt.Sprintf("Mutable reference %s violates rule %s (%s).", finding.Original, rule.ID, rule.Requirement)
 	return evaluated
 }
