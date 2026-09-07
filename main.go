@@ -14,7 +14,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -41,6 +43,10 @@ var logger = logging.GetLogger(0)
 var auditRepository = sc.AuditRepositoryResult
 var findRepositories = sc.FindStructured
 var upgradePinnedSHAs = sc.UpgradePinnedSHAs
+var loadRepositoryPolicy = sc.LoadRepositoryPolicy
+var loadRepositoryPolicyAtRevision = sc.LoadRepositoryPolicyAtRevision
+var classifyRepositoryFindings = sc.ClassifyRepositoryFindings
+var buildRepoPath = sc.BuildRepoPathWithWriter
 
 const defaultUpgradeCooldownHours = 24
 
@@ -170,6 +176,33 @@ func WriteToCSV(inv *sc.InventoryResult) error {
 	return csvWriter.Error()
 }
 
+func writePolicyReport(cmd *cobra.Command, report *sc.PolicyReport, format, destination string) error {
+	var writer io.Writer = cmd.OutOrStdout()
+	var outputFile *os.File
+	if destination != "" {
+		file, err := os.Create(destination)
+		if err != nil {
+			return fmt.Errorf("create audit output %s: %w", destination, err)
+		}
+		outputFile = file
+		writer = file
+		defer func() { _ = outputFile.Close() }()
+	}
+
+	switch format {
+	case "human":
+		_, err := fmt.Fprint(writer, sc.FormatPolicyHuman(report))
+		return err
+	case "github":
+		_, err := fmt.Fprint(writer, sc.FormatGitHubAnnotations(report))
+		return err
+	case "sarif":
+		return sc.WriteSARIF(writer, report)
+	default:
+		return fmt.Errorf("invalid --out value %q: valid values are human, github, and sarif", format)
+	}
+}
+
 func newRootCmd() *cobra.Command {
 	// list table configuration
 	tw := tablewriter.NewWriter(os.Stdout)
@@ -181,9 +214,50 @@ func newRootCmd() *cobra.Command {
 		Args:  cobra.MinimumNArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			then := time.Now()
-			rp, err := sc.BuildRepoPath("audit", args)
+			rp, err := buildRepoPath("audit", args, cmd.ErrOrStderr())
 			if err != nil {
 				return err
+			}
+			repoRoot, err := filepath.Abs(string(*rp))
+			if err != nil {
+				return fmt.Errorf("resolve repository path: %w", err)
+			}
+			outputFormat, _ := cmd.Flags().GetString("out")
+			outputPath, _ := cmd.Flags().GetString("output")
+			if outputFormat != "human" && outputFormat != "github" && outputFormat != "sarif" {
+				return fmt.Errorf("invalid --out value %q: valid values are human, github, and sarif", outputFormat)
+			}
+			policyPath, _ := cmd.Flags().GetString("policy")
+			policyRef, _ := cmd.Flags().GetString("policy-from-ref")
+			if policyPath != "" && policyRef != "" {
+				return errors.New("--policy and --policy-from-ref are mutually exclusive")
+			}
+			shouldRaise, _ := cmd.Flags().GetBool("raise-error")
+			var policy *sc.Policy
+			var policySource string
+			switch {
+			case policyRef != "":
+				policy, policySource, err = loadRepositoryPolicyAtRevision(repoRoot, policyRef)
+			case policyPath != "":
+				policy, policySource, err = loadRepositoryPolicy(repoRoot, policyPath)
+			case shouldRaise:
+				// Enforcing CI must not trust a policy that an untrusted checkout can modify.
+				policy = sc.DefaultPolicy()
+			default:
+				policy, policySource, err = loadRepositoryPolicy(repoRoot, "")
+			}
+			if err != nil {
+				cmd.SilenceUsage = true
+				return err
+			}
+			baselineRef, _ := cmd.Flags().GetString("baseline-ref")
+			if baselineRef != "" {
+				policy.Baseline.Ref = baselineRef
+				policy.Baseline.Mode = "new"
+			}
+			changedLinesOnly, _ := cmd.Flags().GetBool("changed-lines")
+			if changedLinesOnly && policy.Baseline.Ref == "" {
+				return errors.New("--changed-lines requires --baseline-ref or baseline.ref in policy")
 			}
 
 			result, scanErr := auditRepository(*rp)
@@ -191,34 +265,68 @@ func newRootCmd() *cobra.Command {
 				return scanErr
 			}
 
-			now := time.Now()
-			di := now.Sub(then)
-			fmt.Fprintf(cmd.OutOrStdout(), "Scan status: %s\n", result.Status)
-			if len(result.Workflows) > 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), sc.FormatAuditReport(result.Workflows))
-			} else {
-				if result.Complete {
+			var classifications []sc.FindingClassification
+			if policy.Baseline.Mode == "new" || changedLinesOnly {
+				classifications, err = classifyRepositoryFindings(repoRoot, policy.Baseline.Ref, result.Details)
+				if err != nil {
+					result.Errors = append(result.Errors, sc.NewScanError(repoRoot, fmt.Errorf("classify changed references: %w", err)))
+					result.Status = sc.ScanStatusIncomplete
+					result.Complete = false
+					classifications = make([]sc.FindingClassification, len(result.Details))
+					scanErr = result.Err()
+				}
+			}
+			cliExceptions, _ := cmd.Flags().GetStringArray("ignore")
+			policyReport, err := sc.EvaluatePolicy(repoRoot, result, policy, sc.PolicyEvaluationOptions{
+				CLIExceptions:    cliExceptions,
+				Classifications:  classifications,
+				ChangedLinesOnly: changedLinesOnly,
+			})
+			if err != nil {
+				cmd.SilenceUsage = true
+				return fmt.Errorf("evaluate policy: %w", err)
+			}
+			legacyOutput := outputFormat == "human" && outputPath == "" && policySource == "" &&
+				policyPath == "" && policyRef == "" && len(cliExceptions) == 0 && baselineRef == "" && !changedLinesOnly
+			if legacyOutput {
+				fmt.Fprintf(cmd.OutOrStdout(), "Scan status: %s\n", result.Status)
+				if len(result.Workflows) > 0 {
+					fmt.Fprintln(cmd.OutOrStdout(), sc.FormatAuditReport(result.Workflows))
+				} else if result.Complete {
 					fmt.Fprintln(cmd.OutOrStdout(), "No mutable references found. Good job!")
+				}
+			} else {
+				if err := writePolicyReport(cmd, policyReport, outputFormat, outputPath); err != nil {
+					cmd.SilenceUsage = true
+					return err
 				}
 			}
 			for _, fileErr := range result.Errors {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Scan error: %s\n", fileErr.Error())
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Total time: %.2f s\n", di.Seconds())
+			if outputFormat == "human" && outputPath == "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Total time: %.2f s\n", time.Since(then).Seconds())
+			}
 
 			if scanErr != nil {
 				cmd.SilenceUsage = true
 				return scanErr
 			}
-			shouldRaise, _ := cmd.Flags().GetBool("raise-error")
-			if shouldRaise && len(result.Workflows) > 0 {
+			if shouldRaise && policyReport.ViolationCount > 0 {
 				cmd.SilenceUsage = true
-				return errors.New("mutable GitHub Actions references found")
+				return fmt.Errorf("%d policy violation(s) found", policyReport.ViolationCount)
 			}
 			return nil
 		},
 	}
 	cmdAudit.PersistentFlags().Bool("raise-error", false, "Raise error on any matches. Useful for interrupting CI pipelines")
+	cmdAudit.Flags().String("policy", "", "Policy file path (defaults to .scharf-policy.yml in the repository)")
+	cmdAudit.Flags().String("policy-from-ref", "", "Load .scharf-policy.yml from a trusted Git revision")
+	cmdAudit.Flags().StringArray("ignore", nil, "Transient exact owner/repo[/subpath][@ref] or regex:<RE2> exception; repeatable")
+	cmdAudit.Flags().String("baseline-ref", "", "Git revision used to classify existing findings")
+	cmdAudit.Flags().Bool("changed-lines", false, "Enforce only findings on lines changed since the baseline merge base")
+	cmdAudit.Flags().String("out", "human", "Audit output format: human, github, or sarif")
+	cmdAudit.Flags().String("output", "", "Write audit output to a file instead of stdout")
 
 	var cmdAutoFix = &cobra.Command{
 		Use:   "autofix",

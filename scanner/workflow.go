@@ -116,6 +116,7 @@ type ReferenceFinding struct {
 	Description     string `json:"description,omitempty"`
 	FixSHA          string `json:"fix_sha,omitempty"`
 	FixMessage      string `json:"fix_message,omitempty"`
+	style           yaml.Style
 }
 
 func (finding ReferenceFinding) legacy() Finding {
@@ -153,6 +154,7 @@ func ScanWorkflowReferences(content []byte, filePath string) ([]ReferenceFinding
 			EndOffset:       reference.EndOffset,
 			ScalarEndOffset: reference.ScalarEndOffset,
 			Editable:        reference.Editable,
+			style:           reference.Style,
 		})
 	}
 	if scanErr != nil {

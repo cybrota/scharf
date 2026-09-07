@@ -287,3 +287,129 @@ func TestMachineOutputsExposeIncompleteStatus(t *testing.T) {
 		t.Fatalf("CSV output does not expose incomplete state: %#v", rows)
 	}
 }
+
+func TestAuditCLIRepeatableIgnoresDoNotSuppressUnrelatedFindings(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := gitlib.PlainInit(repo, false); err != nil {
+		t.Fatal(err)
+	}
+	originalAudit := auditRepository
+	auditRepository = func(sc.FilePath) (*sc.AuditResult, error) {
+		return &sc.AuditResult{
+			Status: sc.ScanStatusFindings, Complete: true,
+			Details: []sc.ReferenceFinding{
+				{FilePath: filepath.Join(repo, ".github/workflows/ci.yml"), Repository: "owner/ignored", Ref: "main", Original: "owner/ignored@main"},
+				{FilePath: filepath.Join(repo, ".github/workflows/ci.yml"), Repository: "owner/kept", Ref: "v1", Original: "owner/kept@v1"},
+			},
+		}, nil
+	}
+	t.Cleanup(func() { auditRepository = originalAudit })
+
+	_, _, err := executeRoot("audit", repo, "--raise-error", "--ignore", "owner/ignored")
+	if err == nil || !strings.Contains(err.Error(), "1 policy violation") {
+		t.Fatalf("error = %v; unrelated finding was suppressed", err)
+	}
+	stdout, stderr, err := executeRoot("audit", repo, "--raise-error", "--ignore", "owner/ignored", "--ignore", `regex:owner/kept@v[0-9]+`)
+	if err != nil {
+		t.Fatalf("all ignored audit failed: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(stdout, "cli-ignore") || !strings.Contains(stdout, "Policy outcome: pass") {
+		t.Fatalf("stdout = %q; want explicit ignore dispositions", stdout)
+	}
+}
+
+func TestAuditCLIPolicyCanDisableTransientIgnores(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := gitlib.PlainInit(repo, false); err != nil {
+		t.Fatal(err)
+	}
+	policyPath := filepath.Join(repo, ".scharf-policy.yml")
+	if err := os.WriteFile(policyPath, []byte("version: 1\nallow_cli_ignores: false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := executeRoot("audit", repo, "--ignore", "owner/repo")
+	if err == nil || !strings.Contains(err.Error(), "CLI ignores are disabled") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestAuditCLISARIFRetainsIncompleteStateBeforeFailure(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := gitlib.PlainInit(repo, false); err != nil {
+		t.Fatal(err)
+	}
+	originalAudit := auditRepository
+	scanErrors := []sc.ScanError{{FilePath: ".github/workflows/broken.yml", Message: "invalid YAML"}}
+	auditRepository = func(sc.FilePath) (*sc.AuditResult, error) {
+		return &sc.AuditResult{Status: sc.ScanStatusIncomplete, Complete: false, Errors: scanErrors}, &sc.IncompleteScanError{Errors: scanErrors}
+	}
+	t.Cleanup(func() { auditRepository = originalAudit })
+
+	stdout, stderr, err := executeRoot("audit", repo, "--out", "sarif")
+	if err == nil {
+		t.Fatal("incomplete SARIF audit returned success")
+	}
+	if !strings.Contains(stdout, `"executionSuccessful": false`) || !strings.Contains(stdout, sc.ScanIncompleteRuleID) || !strings.Contains(stderr, "broken.yml") {
+		t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestAuditCLIChangedLineModeUsesClassifications(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := gitlib.PlainInit(repo, false); err != nil {
+		t.Fatal(err)
+	}
+	originalAudit := auditRepository
+	originalClassify := classifyRepositoryFindings
+	auditRepository = func(sc.FilePath) (*sc.AuditResult, error) {
+		return &sc.AuditResult{
+			Status: sc.ScanStatusFindings, Complete: true,
+			Details: []sc.ReferenceFinding{{FilePath: filepath.Join(repo, ".github/workflows/ci.yml"), Repository: "owner/repo", Ref: "main", Original: "owner/repo@main"}},
+		}, nil
+	}
+	classifyRepositoryFindings = func(string, string, []sc.ReferenceFinding) ([]sc.FindingClassification, error) {
+		return []sc.FindingClassification{{Classified: true, New: false, Changed: false}}, nil
+	}
+	t.Cleanup(func() {
+		auditRepository = originalAudit
+		classifyRepositoryFindings = originalClassify
+	})
+
+	stdout, stderr, err := executeRoot("audit", repo, "--baseline-ref", "main", "--changed-lines", "--raise-error")
+	if err != nil {
+		t.Fatalf("unchanged finding failed audit: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(stdout, "unchanged-line") || !strings.Contains(stdout, "Policy outcome: pass") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+}
+
+func TestAuditRaiseErrorDoesNotTrustDiscoveredCheckoutPolicy(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := gitlib.PlainInit(repo, false); err != nil {
+		t.Fatal(err)
+	}
+	policy := "version: 1\nexceptions:\n  - id: BYPASS\n    match:\n      repository: owner/repo\n    owner: attacker\n    rationale: suppress enforcement\n    approved_by: attacker\n    approval: untrusted\n    expires: 2099-01-01\n"
+	if err := os.WriteFile(filepath.Join(repo, ".scharf-policy.yml"), []byte(policy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	originalAudit := auditRepository
+	auditRepository = func(sc.FilePath) (*sc.AuditResult, error) {
+		return &sc.AuditResult{Status: sc.ScanStatusFindings, Complete: true, Details: []sc.ReferenceFinding{{
+			FilePath: filepath.Join(repo, ".github/workflows/ci.yml"), Repository: "owner/repo", Ref: "main", Original: "owner/repo@main",
+		}}}, nil
+	}
+	t.Cleanup(func() { auditRepository = originalAudit })
+
+	_, _, err := executeRoot("audit", repo, "--raise-error")
+	if err == nil || !strings.Contains(err.Error(), "policy violation") {
+		t.Fatalf("checkout policy bypassed enforcement: %v", err)
+	}
+	stdout, stderr, err := executeRoot("audit", repo, "--raise-error", "--policy", filepath.Join(repo, ".scharf-policy.yml"))
+	if err != nil {
+		t.Fatalf("explicitly trusted policy failed: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(stdout, "active-exception") {
+		t.Fatalf("trusted policy was not applied: %q", stdout)
+	}
+}

@@ -8,6 +8,8 @@ package scanner
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -172,14 +174,19 @@ func AutoFixRepository(path FilePath, isDryRun bool) error {
 // If repo is a local path, absolute path is returned
 // If repo is a cloud URL, repository is cloned into a temporary directory for operation.
 func BuildRepoPath(action string, args []string) (*FilePath, error) {
+	return BuildRepoPathWithWriter(action, args, os.Stderr)
+}
+
+// BuildRepoPathWithWriter routes clone diagnostics separately from machine-readable output.
+func BuildRepoPathWithWriter(action string, args []string, diagnostic io.Writer) (*FilePath, error) {
 	if len(args) > 0 {
 		repo := args[0]
 
 		if strings.HasPrefix(repo, "https://") || strings.HasPrefix(repo, "git@") ||
 			strings.HasPrefix(repo, "ssh://") {
 			if action == "audit" || action == "autofix" || action == "upgrade-all-sha" {
-				fmt.Printf("Cloning repository: %s%s%s\n", Blue, repo, Reset)
-				tmp_path, err := git.CloneRepoToTemp(repo)
+				fmt.Fprintf(diagnostic, "Cloning repository: %s%s%s\n", Blue, repo, Reset)
+				tmp_path, err := git.CloneRepoToTempWithWriter(repo, diagnostic)
 				if err != nil {
 					if strings.HasPrefix(repo, "https://") {
 						return nil, fmt.Errorf("%sProblem encountered while cloning: %s.%s Use SSH instead of HTTPS, Ex: git@github.com:psf/requests.git", Red, repo, Reset)
@@ -188,7 +195,7 @@ func BuildRepoPath(action string, args []string) (*FilePath, error) {
 				}
 
 				res := FilePath(tmp_path)
-				fmt.Printf("Cloned %s%s%s into %s%s%s\n", Blue, repo, Reset, Blue, tmp_path, Reset)
+				fmt.Fprintf(diagnostic, "Cloned %s%s%s into %s%s%s\n", Blue, repo, Reset, Blue, tmp_path, Reset)
 				return &res, nil
 			} else {
 				return nil, fmt.Errorf("%sUnsupported action:%s %s", Red, repo, Reset)
