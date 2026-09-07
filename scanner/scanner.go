@@ -11,12 +11,15 @@ package scanner
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 
 	"github.com/cybrota/scharf/git"
+	gitlib "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 // Relative or Absolute path of a file
@@ -25,11 +28,11 @@ type FilePath string
 var findRegex = regexp.MustCompile(
 	`([\w-]+)\/([\w-]+)@` +
 		`(?:` +
-		`v\d+(?:\.\d+)*` + // e.g. v1, v1.2, v10.0.1
+		`v\d+(?:\.\d+)*` +
 		`|` +
-		`\d+\.\d+(?:\.\d+)*` + // e.g. 1.2, 2.0.3  (must have at least one dot)
+		`\d+\.\d+(?:\.\d+)*` +
 		`|` +
-		`main|dev|master` + // branches
+		`main|dev|master` +
 		`)`,
 )
 
@@ -47,91 +50,209 @@ func (g GitRepository) ListBranches(fp FilePath) ([]string, error) {
 	return git.ListGitBranches(string(fp))
 }
 
-// InventoryRecord holds details for a regex match in a file.
+// InventoryRecord preserves the v1 inventory wire contract.
 type InventoryRecord struct {
-	Repository string   `json:"repository_name"` // Repository name or path
-	Branch     string   `json:"branch_name"`     // Branch name
-	FilePath   string   `json:"actions_file"`    // File path where the match was found
-	Matches    []string `json:"matches"`         // Regex match results from the file content
+	Repository string   `json:"repository_name"`
+	Branch     string   `json:"branch_name"`
+	FilePath   string   `json:"actions_file"`
+	Matches    []string `json:"matches"`
 }
 
-// Inventory aggregates multiple inventory records.
+// Inventory preserves the v1 inventory wire contract.
 type Inventory struct {
 	Records []*InventoryRecord `json:"findings"`
 }
 
-// ScanBranch scans a given branch for mutable references
+// InventoryResultRecord adds structured details without changing InventoryRecord.
+type InventoryResultRecord struct {
+	Repository string             `json:"repository_name"`
+	Branch     string             `json:"branch_name"`
+	FilePath   string             `json:"actions_file"`
+	Matches    []string           `json:"matches"`
+	Findings   []ReferenceFinding `json:"details"`
+}
+
+// InventoryResult distinguishes scan completion from findings.
+type InventoryResult struct {
+	Status   ScanStatus               `json:"status"`
+	Complete bool                     `json:"complete"`
+	Records  []*InventoryResultRecord `json:"findings"`
+	Errors   []ScanError              `json:"errors,omitempty"`
+}
+
+// ScanBranch preserves the v1 regex-scanning signature and behavior.
 func ScanBranch(branch string, repo GitRepository, regex *regexp.Regexp, dirPath string) *Inventory {
 	var inventory Inventory
 	fileNames, err := ListFiles(FilePath(dirPath))
 	if err != nil {
-		// The directory might not exist on this branch; skip to next branch.
-		logger.Debug("directory might not exist on branch. skipping to next repo")
 		return nil
 	}
-
-	// Process each file found in the directory.
 	for _, fileName := range fileNames {
 		loc := filepath.Join(dirPath, string(*fileName))
 		content, err := ReadFile(FilePath(loc))
 		if err != nil {
-			// Log error and skip this file.
-			logger.Debug("workflow directory might not exist. skipping to next repo")
 			continue
 		}
-
 		matches, err := ScanContent(content, regex)
-		if err != nil {
-			// Log error and skip this file.
+		if err != nil || len(matches) == 0 {
 			continue
 		}
-
-		if len(matches) > 0 {
-			ir := &InventoryRecord{
-				Repository: repo.Name(),
-				Branch:     branch,
-				FilePath:   loc,
-				Matches:    matches,
-			}
-
-			inventory.Records = append(inventory.Records, ir)
-		}
+		inventory.Records = append(inventory.Records, &InventoryRecord{
+			Repository: repo.Name(),
+			Branch:     branch,
+			FilePath:   loc,
+			Matches:    matches,
+		})
 	}
 	return &inventory
 }
 
-// ScanRepos traverses all repositories found under the root directory,
-// checks each branch, enumerates over files in the given workflow directory path,
-// and scans each file's content for regex matches.
-// ho - HEAD only
-func ScanRepos(repos []*GitRepository, regex *regexp.Regexp, ho bool) (*Inventory, error) {
-	var inventory Inventory
+// ScanBranchResult scans the current working tree with structured workflow analysis.
+func ScanBranchResult(branch string, repo GitRepository, dirPath string) *InventoryResult {
+	result := &InventoryResult{}
+	fileNames, err := ListWorkflowFiles(FilePath(dirPath))
+	if err != nil {
+		result.Errors = append(result.Errors, NewScanError(dirPath, err))
+		result.setStatus()
+		return result
+	}
+	for _, fileName := range fileNames {
+		filePath := string(fileName)
+		content, err := ReadFile(fileName)
+		if err != nil {
+			result.Errors = append(result.Errors, NewScanError(filePath, err))
+			continue
+		}
+		findings, scanErr := ScanWorkflowReferences(content, filePath)
+		if len(findings) > 0 {
+			result.Records = append(result.Records, inventoryResultRecord(branch, repo, filePath, findings))
+		}
+		if scanErr != nil {
+			result.Errors = append(result.Errors, NewScanError(filePath, scanErr))
+		}
+	}
+	result.setStatus()
+	return result
+}
 
-	// Process each repository.
+func inventoryResultRecord(branch string, repo GitRepository, filePath string, findings []ReferenceFinding) *InventoryResultRecord {
+	matches := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		matches = append(matches, finding.Original)
+	}
+	return &InventoryResultRecord{
+		Repository: repo.Name(),
+		Branch:     branch,
+		FilePath:   filePath,
+		Matches:    matches,
+		Findings:   findings,
+	}
+}
+
+// ScanRepos preserves the v1 regex-scanning signature and behavior.
+func ScanRepos(repos []*GitRepository, regex *regexp.Regexp, headOnly bool) (*Inventory, error) {
+	var inventory Inventory
 	for _, repo := range repos {
 		branches, err := repo.ListBranches(repo.absPath)
 		if err != nil {
-			// Log error and continue with next repository.
-			logger.Debug("couldn't detect branches. skipping to next repo")
 			continue
 		}
-
-		if ho {
+		if headOnly {
 			branches = []string{"HEAD"}
 		}
-
-		// For each branch, enumerate files in the specified directory.
 		for _, branch := range branches {
 			searchPath := filepath.Join(string(repo.absPath), ".github", "workflows")
-			logger.Debug("Processing the repo:", "repo", repo.Name(), "branch", branch, "filepath", searchPath)
-			inv := ScanBranch(branch, *repo, regex, searchPath)
-			if inv != nil {
-				inventory.Records = append(inventory.Records, inv.Records...)
+			branchInventory := ScanBranch(branch, *repo, regex, searchPath)
+			if branchInventory != nil {
+				inventory.Records = append(inventory.Records, branchInventory.Records...)
 			}
 		}
 	}
-
 	return &inventory, nil
+}
+
+// ScanRepositories scans the working tree for headOnly and local branch trees otherwise.
+func ScanRepositories(repos []*GitRepository, headOnly bool) (*InventoryResult, error) {
+	var inventory InventoryResult
+	for _, repo := range repos {
+		if headOnly {
+			searchPath := filepath.Join(string(repo.absPath), ".github", "workflows")
+			branchResult := ScanBranchResult("HEAD", *repo, searchPath)
+			inventory.Records = append(inventory.Records, branchResult.Records...)
+			inventory.Errors = append(inventory.Errors, branchResult.Errors...)
+			continue
+		}
+
+		gitRepo, err := gitlib.PlainOpen(string(repo.absPath))
+		if err != nil {
+			inventory.Errors = append(inventory.Errors, NewScanError(string(repo.absPath), fmt.Errorf("open Git repository: %w", err)))
+			continue
+		}
+		branches, err := gitRepo.Branches()
+		if err != nil {
+			inventory.Errors = append(inventory.Errors, NewScanError(string(repo.absPath), fmt.Errorf("list Git branches: %w", err)))
+			continue
+		}
+		err = branches.ForEach(func(ref *plumbing.Reference) error {
+			branchResult := scanGitTree(ref.Name().Short(), *repo, gitRepo, ref.Hash())
+			inventory.Records = append(inventory.Records, branchResult.Records...)
+			inventory.Errors = append(inventory.Errors, branchResult.Errors...)
+			return nil
+		})
+		if err != nil {
+			inventory.Errors = append(inventory.Errors, NewScanError(string(repo.absPath), fmt.Errorf("iterate Git branches: %w", err)))
+		}
+	}
+	inventory.setStatus()
+	return &inventory, inventory.Err()
+}
+
+func scanGitTree(branch string, repo GitRepository, gitRepo *gitlib.Repository, hash plumbing.Hash) *InventoryResult {
+	result := &InventoryResult{}
+	commit, err := gitRepo.CommitObject(hash)
+	if err != nil {
+		result.Errors = append(result.Errors, NewScanError(string(repo.absPath), fmt.Errorf("read branch %s commit: %w", branch, err)))
+		result.setStatus()
+		return result
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		result.Errors = append(result.Errors, NewScanError(string(repo.absPath), fmt.Errorf("read branch %s tree: %w", branch, err)))
+		result.setStatus()
+		return result
+	}
+	files := tree.Files()
+	err = files.ForEach(func(file *object.File) error {
+		if file.Mode != filemode.Regular && file.Mode != filemode.Executable {
+			return nil
+		}
+		if filepath.ToSlash(filepath.Dir(file.Name)) != ".github/workflows" {
+			return nil
+		}
+		ext := filepath.Ext(file.Name)
+		if ext != ".yml" && ext != ".yaml" {
+			return nil
+		}
+		filePath := filepath.Join(string(repo.absPath), filepath.FromSlash(file.Name))
+		content, err := file.Contents()
+		if err != nil {
+			result.Errors = append(result.Errors, NewScanError(filePath, fmt.Errorf("read branch %s blob: %w", branch, err)))
+			return nil
+		}
+		findings, scanErr := ScanWorkflowReferences([]byte(content), filePath)
+		if len(findings) > 0 {
+			result.Records = append(result.Records, inventoryResultRecord(branch, repo, filePath, findings))
+		}
+		if scanErr != nil {
+			result.Errors = append(result.Errors, NewScanError(filePath, scanErr))
+		}
+		return nil
+	})
+	if err != nil {
+		result.Errors = append(result.Errors, NewScanError(string(repo.absPath), fmt.Errorf("scan branch %s tree: %w", branch, err)))
+	}
+	result.setStatus()
+	return result
 }
 
 // shouldIncludeDir returns false if the file should be ignored.
@@ -155,13 +276,16 @@ func ListRepositoriesAtRoot(root FilePath) ([]*GitRepository, error) {
 
 	var rs []*GitRepository
 	for _, repo := range repos {
+		if !repo.IsDir() {
+			continue
+		}
 		abs, err := filepath.Abs(filepath.Join(string(root), repo.Name()))
 		if err != nil {
 			logger.Error("failed to find absolute path", "err", err)
 			return nil, fmt.Errorf("os: %w", err)
 		}
 
-		if shouldIncludeDir(repo.Name()) {
+		if shouldIncludeDir(repo.Name()) && git.IsGitRepo(abs) {
 			rs = append(rs, &GitRepository{
 				name:    repo.Name(),
 				absPath: FilePath(abs),
@@ -246,13 +370,16 @@ func ScanContentWithPosition(content []byte, regex *regexp.Regexp) ([]Match, err
 func Find(root string, headOnly bool) (*Inventory, error) {
 	repos, err := ListRepositoriesAtRoot(FilePath(root))
 	if err != nil {
-		log.Fatal(err.Error())
+		return nil, err
 	}
+	return ScanRepos(repos, findRegex, headOnly)
+}
 
-	inv, err := ScanRepos(repos, findRegex, headOnly)
+// FindStructured returns structure-aware findings and explicit completion state.
+func FindStructured(root string, headOnly bool) (*InventoryResult, error) {
+	repos, err := ListRepositoriesAtRoot(FilePath(root))
 	if err != nil {
 		return nil, err
 	}
-
-	return inv, nil
+	return ScanRepositories(repos, headOnly)
 }

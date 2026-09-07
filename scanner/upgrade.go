@@ -7,19 +7,19 @@
 package scanner
 
 import (
-	"errors"
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
-	"syscall"
 
 	"github.com/cybrota/scharf/git"
 	"github.com/cybrota/scharf/network"
 )
 
-var pinnedRefRegex = regexp.MustCompile(`([\w.-]+/[\w.-]+)@([a-f0-9]{40})\s+#\s+([^\s#]+)`)
+var pinnedRefRegex = regexp.MustCompile(`([\w.-]+/[\w.-]+)@([a-f0-9]{40})\s+#\s+([^\s]+)`)
 var barePinnedRefRegex = regexp.MustCompile(`([\w.-]+/[\w.-]+)@([a-f0-9]{40})\s*$`)
 
 const (
@@ -55,7 +55,6 @@ func ParsePinnedRef(line string) (PinnedRef, bool) {
 	if len(match) != 4 {
 		return PinnedRef{}, false
 	}
-
 	return PinnedRef{
 		Action:  match[1],
 		SHA:     match[2],
@@ -69,31 +68,30 @@ func ParseBarePinnedRef(line string) (BarePinnedRef, bool) {
 	if len(match) != 3 {
 		return BarePinnedRef{}, false
 	}
-
 	return BarePinnedRef{Action: match[1], SHA: match[2]}, true
 }
 
 // CollectPinnedRefs returns strict Scharf-format pinned references found in content.
 func CollectPinnedRefs(content []byte) []Finding {
-	matches, err := ScanContentWithPosition(content, pinnedRefRegex)
-	if err != nil {
-		return []Finding{}
-	}
+	references, _ := parseWorkflowReferences(content)
 
-	findings := make([]Finding, 0, len(matches))
-	for _, m := range matches {
-		parsed, ok := ParsePinnedRef(m.Text)
+	findings := make([]Finding, 0, len(references))
+	for _, reference := range references {
+		if !reference.Pinned {
+			continue
+		}
+		version, _, _, ok := referenceVersionHint(content, reference)
 		if !ok {
 			continue
 		}
 
 		findings = append(findings, Finding{
-			Line:     m.Line,
-			Column:   m.Col,
-			Action:   parsed.Action,
-			Version:  parsed.Version,
-			FixSHA:   parsed.SHA,
-			Original: m.Text,
+			Line:     reference.Line,
+			Column:   reference.Column,
+			Action:   reference.Repository,
+			Version:  version,
+			FixSHA:   reference.Ref,
+			Original: fmt.Sprintf("%s@%s # %s", referenceTarget(reference), reference.Ref, version),
 		})
 	}
 
@@ -112,27 +110,56 @@ func UpgradePinnedSHAs(path FilePath, cooldownHours int, isDryRun bool) error {
 	}
 
 	loc := filepath.Join(abs, ".github", "workflows")
-	fileNames, err := ListFiles(FilePath(loc))
+	fileNames, err := ListWorkflowFiles(FilePath(loc))
 	if err != nil {
 		return fmt.Errorf("file error: %w", err)
 	}
 
-	resolver := newUpgradeResolver()
-
+	type workflowUpdate struct {
+		path    string
+		content []byte
+		mode    os.FileMode
+		changed bool
+	}
+	updates := make([]workflowUpdate, 0, len(fileNames))
 	for _, fileName := range fileNames {
-		workflowPath := filepath.Join(loc, string(*fileName))
-		content, err := ReadFile(FilePath(workflowPath))
+		workflowPath := string(fileName)
+		content, err := ReadFile(fileName)
 		if err != nil {
-			if errors.Is(err, syscall.EISDIR) {
+			return fmt.Errorf("reading %s: %w", workflowPath, err)
+		}
+		references, err := parseWorkflowReferences(content)
+		if err != nil {
+			return fmt.Errorf("parse workflow %s: %w", workflowPath, err)
+		}
+		for _, reference := range references {
+			if reference.Pinned && !reference.Editable {
+				return fmt.Errorf("parse workflow %s: pinned reference %q at line %d is not safely editable", workflowPath, reference.Original, reference.Line)
+			}
+		}
+		info, err := os.Stat(workflowPath)
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", workflowPath, err)
+		}
+		updates = append(updates, workflowUpdate{path: workflowPath, content: content, mode: info.Mode().Perm()})
+	}
+
+	resolver := newUpgradeResolver()
+	for i := range updates {
+		updated, changed, err := upgradePinnedSHAsInContent(updates[i].content, updates[i].path, resolver, cooldownHours, isDryRun)
+		if err != nil {
+			return err
+		}
+		updates[i].content = updated
+		updates[i].changed = changed
+	}
+	if !isDryRun {
+		for _, update := range updates {
+			if !update.changed {
 				continue
 			}
-			return fmt.Errorf("file error: %w", err)
-		}
-
-		updated, fileChanged := upgradePinnedSHAsInContent(content, workflowPath, resolver, cooldownHours, isDryRun)
-		if fileChanged && !isDryRun {
-			if err := os.WriteFile(workflowPath, updated, 0o644); err != nil {
-				return fmt.Errorf("writing %s: %w", workflowPath, err)
+			if err := os.WriteFile(update.path, update.content, update.mode); err != nil {
+				return fmt.Errorf("writing %s: %w", update.path, err)
 			}
 		}
 	}
@@ -144,75 +171,119 @@ func UpgradePinnedSHAs(path FilePath, cooldownHours int, isDryRun bool) error {
 	return nil
 }
 
-func upgradePinnedSHAsInContent(content []byte, workflowPath string, resolver upgradeResolver, cooldownHours int, isDryRun bool) ([]byte, bool) {
-	lines := strings.Split(string(content), "\n")
-	changed := false
+func upgradePinnedSHAsInContent(content []byte, workflowPath string, resolver upgradeResolver, cooldownHours int, isDryRun bool) ([]byte, bool, error) {
+	references, err := parseWorkflowReferences(content)
+	if err != nil {
+		return content, false, fmt.Errorf("parse workflow %s: %w", workflowPath, err)
+	}
+
+	type sourceEdit struct {
+		start       int
+		end         int
+		replacement string
+	}
+	var edits []sourceEdit
 	skippedNonScharf := 0
 	tagIndexByAction := map[string]map[string][]string{}
 
-	for i := range lines {
-		if !strings.Contains(lines[i], "uses:") {
+	for _, reference := range references {
+		if !reference.Pinned {
+			skippedNonScharf++
 			continue
 		}
 
-		parsed, ok := ParsePinnedRef(lines[i])
-		hadVersionHint := ok
-		if !ok {
-			bare, bareOK := ParseBarePinnedRef(lines[i])
-			if !bareOK {
-				skippedNonScharf++
-				continue
+		currentVersion, hintStart, hintEnd, hadVersionHint := referenceVersionHint(content, reference)
+		if !hadVersionHint {
+			bare := BarePinnedRef{
+				Action: reference.Repository,
+				SHA:    reference.Ref,
 			}
-
-			currentVersion, reason, inferred := inferVersionForBarePinnedSHA(bare, resolver, tagIndexByAction)
+			var reason string
+			var inferred bool
+			currentVersion, reason, inferred = inferVersionForBarePinnedSHA(bare, resolver, tagIndexByAction)
 			if !inferred {
-				fmt.Printf("%sWarning:%s skipping %s@%s at %s:%d (%s)\n", Yellow, Reset, bare.Action, bare.SHA, workflowPath, i+1, reason)
+				fmt.Printf("%sWarning:%s skipping %s@%s at %s:%d (%s)\n", Yellow, Reset, referenceTarget(reference), bare.SHA, workflowPath, reference.Line, reason)
 				continue
 			}
-
-			parsed = PinnedRef{Action: bare.Action, SHA: bare.SHA, Version: currentVersion}
 		}
 
-		result, err := resolver.ResolveNext(parsed.Action, parsed.Version, cooldownHours)
+		result, err := resolver.ResolveNext(reference.Repository, currentVersion, cooldownHours)
 		if err != nil || result == nil || result.NextVersion == "" || result.NextSHA == "" {
-			fmt.Printf("%sWarning:%s skipping %s@%s at %s:%d (no resolvable next version)\n", Yellow, Reset, parsed.Action, parsed.Version, workflowPath, i+1)
+			fmt.Printf("%sWarning:%s skipping %s@%s at %s:%d (no resolvable next version)\n", Yellow, Reset, reference.Repository, currentVersion, workflowPath, reference.Line)
 			continue
 		}
 
 		if result.UnderCooldown {
-			fmt.Printf("%sWarning:%s %s@%s is under cooldown; proceeding with upgrade at %s:%d\n", Yellow, Reset, parsed.Action, parsed.Version, workflowPath, i+1)
+			fmt.Printf("%sWarning:%s %s@%s is under cooldown; proceeding with upgrade at %s:%d\n", Yellow, Reset, reference.Repository, currentVersion, workflowPath, reference.Line)
 		}
 
-		fromRef := fmt.Sprintf("%s@%s # %s", parsed.Action, parsed.SHA, parsed.Version)
-		if !hadVersionHint {
-			fromRef = fmt.Sprintf("%s@%s", parsed.Action, parsed.SHA)
-		}
-		toRef := fmt.Sprintf("%s@%s # %s", parsed.Action, result.NextSHA, result.NextVersion)
-
-		if !strings.Contains(lines[i], fromRef) {
-			fmt.Printf("%sWarning:%s could not safely replace ref at %s:%d\n", Yellow, Reset, workflowPath, i+1)
-			continue
-		}
+		fromRef := reference.Original
+		toRef := fmt.Sprintf("%s@%s", referenceTarget(reference), result.NextSHA)
 
 		if isDryRun {
-			fmt.Printf("Dry-run: planned update %s:%d %s -> %s\n", workflowPath, i+1, fromRef, toRef)
+			fmt.Printf("Dry-run: planned update %s:%d %s -> %s # %s\n", workflowPath, reference.Line, fromRef, toRef, result.NextVersion)
 			continue
 		}
 
-		lines[i] = strings.Replace(lines[i], fromRef, toRef, 1)
-		changed = true
-		fmt.Printf("Updated %s:%d %s -> %s\n", workflowPath, i+1, fromRef, toRef)
+		edits = append(edits, sourceEdit{
+			start:       reference.StartOffset,
+			end:         reference.EndOffset,
+			replacement: scalarReplacement(reference.Style, toRef),
+		})
+		if hadVersionHint {
+			edits = append(edits, sourceEdit{start: hintStart, end: hintEnd, replacement: result.NextVersion})
+		} else if lineEnd := sourceLineEnd(content, reference.ScalarEndOffset); scalarIsLineTerminal(content, reference.ScalarEndOffset, lineEnd) {
+			edits = append(edits, sourceEdit{start: reference.ScalarEndOffset, end: reference.ScalarEndOffset, replacement: " # " + result.NextVersion})
+		}
+		fmt.Printf("Updated %s:%d %s -> %s # %s\n", workflowPath, reference.Line, fromRef, toRef, result.NextVersion)
 	}
 
 	if skippedNonScharf > 0 {
 		fmt.Printf("%sInfo:%s skipped %d non-Scharf references in %s (expected format: owner/repo@<40hexsha> # <version>)\n", Yellow, Reset, skippedNonScharf, workflowPath)
 	}
 
-	if !changed {
-		return content, false
+	if len(edits) == 0 {
+		return content, false, nil
 	}
 
-	return []byte(strings.Join(lines, "\n")), true
+	sort.SliceStable(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+	updated := append([]byte(nil), content...)
+	for _, edit := range edits {
+		updated = append(updated[:edit.start], append([]byte(edit.replacement), updated[edit.end:]...)...)
+	}
+	return updated, true, nil
+}
+
+func referenceTarget(reference actionReference) string {
+	target := reference.Repository
+	if reference.Subpath != "" {
+		target += "/" + reference.Subpath
+	}
+	return target
+}
+
+func referenceVersionHint(content []byte, reference actionReference) (string, int, int, bool) {
+	lineEnd := sourceLineEnd(content, reference.ScalarEndOffset)
+	if !scalarIsLineTerminal(content, reference.ScalarEndOffset, lineEnd) {
+		return "", 0, 0, false
+	}
+	suffix := content[reference.ScalarEndOffset:lineEnd]
+	comment := bytes.IndexByte(suffix, '#')
+	if comment < 0 {
+		return "", 0, 0, false
+	}
+	start := reference.ScalarEndOffset + comment + 1
+	for start < lineEnd && (content[start] == ' ' || content[start] == '\t') {
+		start++
+	}
+	end := start
+	for end < lineEnd && content[end] != ' ' && content[end] != '\t' && content[end] != '\r' {
+		end++
+	}
+	if start == end {
+		return "", 0, 0, false
+	}
+	return string(content[start:end]), start, end, true
 }
 
 func inferVersionForBarePinnedSHA(
@@ -239,6 +310,14 @@ func inferVersionForBarePinnedSHA(
 	}
 
 	matches := shaToTags[bare.SHA]
+	if len(matches) == 0 {
+		for sha, tags := range shaToTags {
+			if strings.EqualFold(sha, bare.SHA) {
+				matches = tags
+				break
+			}
+		}
+	}
 	if len(matches) == 0 {
 		return "", skipReasonNoTagForSHA, false
 	}

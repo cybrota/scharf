@@ -76,18 +76,13 @@ func FormatAuditReport(workflows []Workflow) string {
 	return b.String()
 }
 
-// ApplyFixesInFile opens the given file, applies all Findings in-place, and
-// writes the file back. It applies fixes in top-to-bottom, left-to-right order
-// so byte offsets remain valid.
+// ApplyFixesInFile preserves the v1 line-and-column replacement contract.
 func ApplyFixesInFile(wf Workflow, isDryRun bool) error {
-	// 1) Read original content
 	data, err := os.ReadFile(wf.FilePath)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", wf.FilePath, err)
 	}
 	lines := strings.Split(string(data), "\n")
-
-	// 2) Sort issues so earlier lines/columns are applied first
 	sort.Slice(wf.Issues, func(i, j int) bool {
 		if wf.Issues[i].Line != wf.Issues[j].Line {
 			return wf.Issues[i].Line < wf.Issues[j].Line
@@ -95,7 +90,6 @@ func ApplyFixesInFile(wf Workflow, isDryRun bool) error {
 		return wf.Issues[i].Column < wf.Issues[j].Column
 	})
 
-	// 3) Apply each fix
 	for _, issue := range wf.Issues {
 		loc := fmt.Sprintf("Line %d, Col %d", issue.Line, issue.Column)
 
@@ -107,38 +101,93 @@ func ApplyFixesInFile(wf Workflow, isDryRun bool) error {
 		if idx < 0 || idx >= len(lines) {
 			return fmt.Errorf("invalid line %d in %s", issue.Line, wf.FilePath)
 		}
-
 		line := lines[idx]
 		if issue.Column-1 > len(line) {
-			return fmt.Errorf(
-				"column %d out of range on line %d (%q)",
-				issue.Column, issue.Line, line,
-			)
+			return fmt.Errorf("column %d out of range on line %d (%q)", issue.Column, issue.Line, line)
 		}
-
-		// Split at the byte offset; then replace the first occurrence of Original
 		prefix := line[:issue.Column-1]
 		suffix := line[issue.Column-1:]
 		if !strings.Contains(suffix, issue.Original) {
-			return fmt.Errorf(
-				"could not find %q at line %d, col %d in %s",
-				issue.Original, issue.Line, issue.Column, wf.FilePath,
-			)
+			return fmt.Errorf("could not find %q at line %d, col %d in %s", issue.Original, issue.Line, issue.Column, wf.FilePath)
 		}
-
-		// Perform exactly one replacement
-		newSuffix := strings.Replace(suffix, issue.Original, fmt.Sprintf("%s@%s # %s", issue.Action, issue.FixSHA, issue.Version), 1)
-		lines[idx] = prefix + newSuffix
+		lines[idx] = prefix + strings.Replace(suffix, issue.Original, fmt.Sprintf("%s@%s # %s", issue.Action, issue.FixSHA, issue.Version), 1)
 		fmt.Printf("  - [%s%s%s] %s Fixed: Pinned '%s%s' to '%s' %s\n", Gray, loc, Reset, Green, issue.Action, fmt.Sprintf("@%s", issue.Version), issue.FixSHA, Reset)
 	}
 
-	// 4) Write back (you could write to a temp file + rename for safety)
-	output := strings.Join(lines, "\n")
-
 	if !isDryRun {
-		if err := os.WriteFile(wf.FilePath, []byte(output), os.ModeAppend); err != nil {
+		info, err := os.Stat(wf.FilePath)
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", wf.FilePath, err)
+		}
+		if err := os.WriteFile(wf.FilePath, []byte(strings.Join(lines, "\n")), info.Mode().Perm()); err != nil {
 			return fmt.Errorf("writing %s: %w", wf.FilePath, err)
 		}
+	}
+	return nil
+}
+
+// ApplyReferenceFixesInFile applies verified source-span edits without reserializing YAML.
+func ApplyReferenceFixesInFile(filePath string, findings []ReferenceFinding, isDryRun bool) error {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", filePath, err)
+	}
+
+	type sourceEdit struct {
+		start       int
+		end         int
+		replacement string
+	}
+	var edits []sourceEdit
+	for _, finding := range findings {
+		if finding.FixSHA == SHA256NotAvailable {
+			continue
+		}
+		if !finding.Editable {
+			return fmt.Errorf("reference %q at %s:%d is not safely editable", finding.Original, filePath, finding.Line)
+		}
+		if finding.StartOffset < 0 || finding.EndOffset < finding.StartOffset || finding.EndOffset > len(data) ||
+			finding.ScalarEndOffset < finding.EndOffset || finding.ScalarEndOffset > len(data) ||
+			string(data[finding.StartOffset:finding.EndOffset]) != finding.SourceText {
+			return fmt.Errorf("reference %q changed at line %d, col %d in %s", finding.Original, finding.Line, finding.Column, filePath)
+		}
+
+		target := finding.Repository
+		if finding.Subpath != "" {
+			target += "/" + finding.Subpath
+		}
+		edits = append(edits, sourceEdit{
+			start: finding.StartOffset,
+			end:   finding.EndOffset,
+			replacement: scalarReplacement(
+				scalarStyleAtSpan(data, finding.StartOffset, finding.EndOffset, finding.ScalarEndOffset),
+				fmt.Sprintf("%s@%s", target, finding.FixSHA),
+			),
+		})
+		lineEnd := sourceLineEnd(data, finding.ScalarEndOffset)
+		if scalarIsLineTerminal(data, finding.ScalarEndOffset, lineEnd) {
+			edits = append(edits, sourceEdit{
+				start:       finding.ScalarEndOffset,
+				end:         finding.ScalarEndOffset,
+				replacement: fmt.Sprintf(" # %s", finding.Ref),
+			})
+		}
+	}
+
+	sort.SliceStable(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+	updated := append([]byte(nil), data...)
+	for _, edit := range edits {
+		updated = append(updated[:edit.start], append([]byte(edit.replacement), updated[edit.end:]...)...)
+	}
+	if isDryRun {
+		return nil
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", filePath, err)
+	}
+	if err := os.WriteFile(filePath, updated, info.Mode().Perm()); err != nil {
+		return fmt.Errorf("writing %s: %w", filePath, err)
 	}
 	return nil
 }

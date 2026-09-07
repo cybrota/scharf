@@ -12,8 +12,8 @@ import (
 	_ "embed"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
 	"os"
 	"regexp"
 	"strings"
@@ -37,6 +37,10 @@ Copyright (c) 2025 Naren Yellavula & Cybrota contributors - https://github.com/c
 `
 
 var logger = logging.GetLogger(0)
+
+var auditRepository = sc.AuditRepositoryResult
+var findRepositories = sc.FindStructured
+var upgradePinnedSHAs = sc.UpgradePinnedSHAs
 
 const defaultUpgradeCooldownHours = 24
 
@@ -102,39 +106,68 @@ func addSharedUpgradeFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("dry-run", false, "Preview changes without writing files")
 }
 
-func writeToJSON(inv *sc.Inventory) {
-	f, _ := os.Create("findings.json")
-	defer f.Close()
+func writeToJSON(inv *sc.InventoryResult) error {
+	f, err := os.Create("findings.json")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
 	enc := json.NewEncoder(f)
 	enc.SetIndent(" ", " ")
-	enc.Encode(inv)
+	return enc.Encode(inv)
 }
 
-func WriteToCSV(inv *sc.Inventory) {
+func WriteToCSV(inv *sc.InventoryResult) error {
 	writeRows := [][]string{
 		{
 			"repository_name",
 			"branch_name",
 			"actions_file",
 			"action",
+			"scan_status",
+			"row_kind",
+			"line",
+			"column",
+			"action_repository",
+			"subpath",
+			"ref",
+			"error",
 		},
 	}
 
 	for _, ir := range inv.Records {
-		for _, mat := range ir.Matches {
+		for _, finding := range ir.Findings {
 			writeRows = append(writeRows, []string{
 				ir.Repository,
 				ir.Branch,
 				ir.FilePath,
-				mat,
+				finding.Original,
+				string(inv.Status),
+				"finding",
+				fmt.Sprintf("%d", finding.Line),
+				fmt.Sprintf("%d", finding.Column),
+				finding.Repository,
+				finding.Subpath,
+				finding.Ref,
+				"",
 			})
 		}
 	}
+	for _, scanErr := range inv.Errors {
+		writeRows = append(writeRows, []string{"", "", scanErr.FilePath, "", string(inv.Status), "error", "", "", "", "", "", scanErr.Message})
+	}
+	if len(inv.Records) == 0 && len(inv.Errors) == 0 {
+		writeRows = append(writeRows, []string{"", "", "", "", string(inv.Status), "metadata", "", "", "", "", "", ""})
+	}
 
-	f, _ := os.Create("findings.csv")
-	defer f.Close()
-	csv_writer := csv.NewWriter(f)
-	csv_writer.WriteAll(writeRows)
+	f, err := os.Create("findings.csv")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	csvWriter := csv.NewWriter(f)
+	csvWriter.WriteAll(writeRows)
+	return csvWriter.Error()
 }
 
 func newRootCmd() *cobra.Command {
@@ -146,32 +179,43 @@ func newRootCmd() *cobra.Command {
 		Short: "🥽 Audit a local or remote Git repository to identify vulnerable actions with mutable references: 'scharf audit <repo>|<url>'",
 		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🥽 Audit the actions and raise error if any mutable references found. Good used with Ci/CD pipelines: 'scharf audit <repo>|<url>'`),
 		Args:  cobra.MinimumNArgs(0),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			then := time.Now()
 			rp, err := sc.BuildRepoPath("audit", args)
 			if err != nil {
-				fmt.Println(err.Error())
-				return
+				return err
 			}
 
-			wfs, err := sc.AuditRepository(*rp)
-			if err != nil {
-				fmt.Printf("Not a git repository nor workflows found. Skipping checks!")
-				return
+			result, scanErr := auditRepository(*rp)
+			if result == nil {
+				return scanErr
 			}
 
 			now := time.Now()
 			di := now.Sub(then)
-			if len(*wfs) > 0 {
-				fmt.Println(sc.FormatAuditReport(*wfs))
-				shouldRaise := cmd.Flag("raise-error")
-				if shouldRaise.Value.String() == "true" {
-					os.Exit(1)
-				}
+			fmt.Fprintf(cmd.OutOrStdout(), "Scan status: %s\n", result.Status)
+			if len(result.Workflows) > 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), sc.FormatAuditReport(result.Workflows))
 			} else {
-				fmt.Println("No mutable references found. Good job!")
+				if result.Complete {
+					fmt.Fprintln(cmd.OutOrStdout(), "No mutable references found. Good job!")
+				}
 			}
-			fmt.Printf("Total time: %.2f s\n", di.Seconds())
+			for _, fileErr := range result.Errors {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Scan error: %s\n", fileErr.Error())
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Total time: %.2f s\n", di.Seconds())
+
+			if scanErr != nil {
+				cmd.SilenceUsage = true
+				return scanErr
+			}
+			shouldRaise, _ := cmd.Flags().GetBool("raise-error")
+			if shouldRaise && len(result.Workflows) > 0 {
+				cmd.SilenceUsage = true
+				return errors.New("mutable GitHub Actions references found")
+			}
+			return nil
 		},
 	}
 	cmdAudit.PersistentFlags().Bool("raise-error", false, "Raise error on any matches. Useful for interrupting CI pipelines")
@@ -181,7 +225,7 @@ func newRootCmd() *cobra.Command {
 		Short: "🪄 Auto-fixes vulnerable third-party GitHub actions with mutable references: 'scharf autofix <repo>|<url>'",
 		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🪄 Auto-fixes vulnerable third-party GitHub actions with mutable references: 'scharf audit <repo>|<url>'`),
 		Args:  cobra.MinimumNArgs(0),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			isDryRun := cmd.Flag("dry-run")
 			var isDR bool
 			if isDryRun.Value.String() == "true" {
@@ -192,19 +236,18 @@ func newRootCmd() *cobra.Command {
 			then := time.Now()
 			rp, err := sc.BuildRepoPath("autofix", args)
 			if err != nil {
-				fmt.Println(err.Error())
-				return
+				return err
 			}
 
 			err = sc.AutoFixRepository(*rp, isDR)
 			if err != nil {
-				fmt.Println(err.Error())
-				fmt.Println("Not a git repository. Skipping autofix!")
-				return
+				cmd.SilenceUsage = true
+				return err
 			}
 			now := time.Now()
 			di := now.Sub(then)
 			fmt.Printf("Total time: %.2f s\n", di.Seconds())
+			return nil
 		},
 	}
 	cmdAutoFix.PersistentFlags().Bool("dry-run", false, "Preview the fixes before actually making the changes")
@@ -214,7 +257,7 @@ func newRootCmd() *cobra.Command {
 		Short: "🔎 Find all GitHub actions with mutable references in a workspace. Should clone your Git repositories into the workspace",
 		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🔎 Find all GitHub actions with mutable references in a workspace. Should clone your Git repositories into the workspace`),
 		Args:  cobra.MinimumNArgs(0),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			root_path_flag := cmd.Flag("root")
 			var ho bool
 			head_only := cmd.Flag("head-only")
@@ -224,24 +267,35 @@ func newRootCmd() *cobra.Command {
 				ho = false
 			}
 
-			inv, err := sc.Find(root_path_flag.Value.String(), ho)
-			if err != nil {
-				log.Fatal(err.Error())
+			inv, scanErr := findRepositories(root_path_flag.Value.String(), ho)
+			if inv == nil {
+				return scanErr
 			}
 
 			out_fmt_flag := cmd.Flag("out")
 			out_fmt := out_fmt_flag.Value.String()
+			var outputErr error
 
 			switch out_fmt {
 			case "json":
-				writeToJSON(inv)
-				break
+				outputErr = writeToJSON(inv)
 			case "csv":
-				WriteToCSV(inv)
-				break
+				outputErr = WriteToCSV(inv)
 			default:
-				logger.Error("The given value to --out flag is invalid. Valid values are json, csv.", "value", out_fmt)
+				return fmt.Errorf("invalid --out value %q: valid values are json and csv", out_fmt)
 			}
+			if outputErr != nil {
+				return outputErr
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Scan status: %s\n", inv.Status)
+			for _, fileErr := range inv.Errors {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Scan error: %s\n", fileErr.Error())
+			}
+			if scanErr != nil {
+				cmd.SilenceUsage = true
+				return scanErr
+			}
+			return nil
 		},
 	}
 
@@ -322,25 +376,26 @@ func newRootCmd() *cobra.Command {
 		Short: "⬆️ Upgrade all Scharf-formatted pinned SHAs in workflows",
 		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `⬆️ Upgrade all Scharf-formatted pinned SHAs in workflows for a local repo or remote URL`),
 		Args:  cobra.MaximumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			cooldownHours, _ := cmd.Flags().GetInt("cooldown-hours")
 			isDryRun, _ := cmd.Flags().GetBool("dry-run")
 
 			then := time.Now()
 			rp, err := sc.BuildRepoPath("upgrade-all-sha", args)
 			if err != nil {
-				fmt.Println(err.Error())
-				return
+				cmd.SilenceUsage = true
+				return err
 			}
 
-			if err := sc.UpgradePinnedSHAs(*rp, cooldownHours, isDryRun); err != nil {
-				fmt.Println(err.Error())
-				return
+			if err := upgradePinnedSHAs(*rp, cooldownHours, isDryRun); err != nil {
+				cmd.SilenceUsage = true
+				return err
 			}
 
 			now := time.Now()
 			di := now.Sub(then)
 			fmt.Printf("Total time: %.2f s\n", di.Seconds())
+			return nil
 		},
 	}
 	addSharedUpgradeFlags(cmdUpgrade)

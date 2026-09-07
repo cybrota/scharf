@@ -420,6 +420,78 @@ func TestSHAResolver_resolve(t *testing.T) {
 	})
 }
 
+func TestSHAResolverResolveUsesExactTagThenBranchPrecedence(t *testing.T) {
+	originalScharfDir := scharfDir
+	scharfDir = t.TempDir()
+	t.Cleanup(func() { scharfDir = originalScharfDir })
+
+	responses := map[string][]BranchOrTag{
+		"https://api.github.com/repos/nonv/tag/tags": {
+			{Name: "stable", Commit: Commit{Sha: "non-v-tag-sha"}},
+		},
+		"https://api.github.com/repos/v/branch/tags": {},
+		"https://api.github.com/repos/v/branch/branches": {
+			{Name: "v-next", Commit: Commit{Sha: "v-branch-sha"}},
+		},
+		"https://api.github.com/repos/slash/ref/tags": {},
+		"https://api.github.com/repos/slash/ref/branches": {
+			{Name: "release/2026", Commit: Commit{Sha: "slash-branch-sha"}},
+		},
+		"https://api.github.com/repos/tag/wins/tags": {
+			{Name: "shared", Commit: Commit{Sha: "tag-sha"}},
+		},
+		"https://api.github.com/repos/tag/wins/branches": {
+			{Name: "shared", Commit: Commit{Sha: "branch-sha"}},
+		},
+	}
+	requests := map[string]int{}
+	customTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		url := req.URL.String()
+		requests[url]++
+		data, ok := responses[url]
+		if !ok {
+			return nil, fmt.Errorf("unexpected URL: %s", url)
+		}
+		body, err := json.Marshal(data)
+		if err != nil {
+			return nil, err
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(body)), Header: make(http.Header)}, nil
+	})
+
+	withHTTPClientTransport(customTransport, func() {
+		resolver := SHAResolver{cache: map[string]string{}}
+		tests := []struct {
+			name   string
+			action string
+			sha    string
+		}{
+			{name: "non-v tag", action: "nonv/tag@stable", sha: "non-v-tag-sha"},
+			{name: "v-prefixed branch fallback", action: "v/branch@v-next", sha: "v-branch-sha"},
+			{name: "slash branch", action: "slash/ref@release/2026", sha: "slash-branch-sha"},
+			{name: "tag wins over branch", action: "tag/wins@shared", sha: "tag-sha"},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				sha, err := resolver.Resolve(tc.action)
+				if err != nil {
+					t.Fatalf("Resolve(%q): %v", tc.action, err)
+				}
+				if sha != tc.sha {
+					t.Fatalf("Resolve(%q) = %q, want %q", tc.action, sha, tc.sha)
+				}
+			})
+		}
+	})
+
+	if requests["https://api.github.com/repos/nonv/tag/branches"] != 0 {
+		t.Fatal("branch lookup occurred after a matching non-v tag")
+	}
+	if requests["https://api.github.com/repos/tag/wins/branches"] != 0 {
+		t.Fatal("branch lookup occurred despite a matching tag")
+	}
+}
+
 // --- Test for handling HTTP errors in resolve ---
 func TestSHAResolver_resolve_HTTPError(t *testing.T) {
 	// Create a custom transport that simulates an HTTP error.

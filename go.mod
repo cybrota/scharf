@@ -6,6 +6,7 @@ require (
 	github.com/go-git/go-git/v5 v5.19.0
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/spf13/cobra v1.9.1
+	go.yaml.in/yaml/v3 v3.0.4
 )
 
 require (
