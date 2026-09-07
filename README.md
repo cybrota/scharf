@@ -98,6 +98,17 @@ scharf audit https_or_git_url
 
 The output lists each insecure tag, its file location, and the SHA you should pin. You can pass `--raise-error` flag to return a Non-zero error code.
 
+Use a repository policy, repeatable transient exceptions, changed-line enforcement, or CI-native output:
+
+```sh
+scharf audit . --policy-from-ref origin/main --raise-error
+scharf audit . --ignore actions/internal --ignore 'regex:example/.+@main'
+scharf audit . --baseline-ref origin/main --changed-lines --out github --raise-error
+scharf audit . --baseline-ref origin/main --out sarif --output scharf.sarif --raise-error
+```
+
+Scharf discovers `.scharf-policy.yml` for advisory audits. Enforcing `--raise-error` uses the secure default unless you select an explicit policy or load `.scharf-policy.yml` from a trusted revision with `--policy-from-ref`. See [Policy and PR feedback](docs/policy.md) for the schema, precedence rules, expiration behavior, rollout modes, and SARIF integration.
+
 ### 3. Find Across Many Repos
 Point Scharf at a directory of cloned repositories to scan multiple projects:
 ```sh
