@@ -73,8 +73,9 @@ blocks:
             - govulncheck ./...
         - name: "Semgrep"
           commands:
-            - python3 -m pip install --user --upgrade pip semgrep
-            - export PATH="$HOME/.local/bin:$PATH"
+            - python3 -m venv .venv-semgrep
+            - . .venv-semgrep/bin/activate
+            - python -m pip install --upgrade pip semgrep
             - semgrep scan
 
   - name: "Build"
