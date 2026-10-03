@@ -1,0 +1,5 @@
+[mcp_servers.semaphore]
+url = "https://mcp.semaphoreci.com/mcp"
+bearer_token_env_var = "SEMAPHORE_API_TOKEN"
+startup_timeout_sec = 30
+tool_timeout_sec = 300
