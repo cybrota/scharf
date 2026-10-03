@@ -21,7 +21,7 @@ global_job_config:
   prologue:
     commands:
       - checkout
-      - sem-version go 1.25
+      - sem-version go 1.26.8
       - cache restore go-mod-$(checksum go.sum) || true
       - cache restore go-build-$SEMAPHORE_GIT_BRANCH || cache restore go-build-main || true
       - go env -w GOMODCACHE=$HOME/go/pkg/mod
