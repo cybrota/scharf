@@ -1,0 +1,129 @@
+# =============================================================================
+# Semaphore CI/CD pipeline for Go projects
+# Starter pipeline showcasing key Semaphore features for newcomers
+#
+# Additional references:
+#   Pipeline YAML reference     https://docs.semaphoreci.com/reference/pipeline-yaml/
+#   Agents & VM images          https://docs.semaphoreci.com/reference/agent/
+# =============================================================================
+version: v1.0
+name: "🚀 Go Project CI/CD Pipeline"
+
+# --------------------------------------------------------------------------- #
+# AGENT                                                                       #
+# --------------------------------------------------------------------------- #
+agent:
+  machine:
+    type: f1-standard-2  # Define the machine type (e.g., f1-standard-2)
+    os_image: ubuntu2404  # Specify the OS image (e.g., ubuntu2204)
+
+# --------------------------------------------------------------------------- #
+# WORKFLOW CONTROL                                                            #
+# --------------------------------------------------------------------------- #
+fail_fast:                        # Stop pipeline on first failure https://docs.semaphoreci.com/essentials/fail-fast/
+  stop:
+    when: "branch != 'main'"
+
+auto_cancel:                      # Cancel outdated pipelines       https://docs.semaphoreci.com/essentials/auto-cancel/
+  running:
+    when: "branch != 'main'"
+  queued:
+    when: "branch != 'main'"
+
+# --------------------------------------------------------------------------- #
+# GLOBAL JOB CONFIG (runs before every job)                                   #
+# --------------------------------------------------------------------------- #
+global_job_config:
+  prologue:
+    commands:
+      - checkout                  # Clone repository source code    https://docs.semaphoreci.com/reference/toolbox#checkout
+      - sem-version go 1.22       # Set Go toolchain version        https://docs.semaphoreci.com/using-semaphore/languages/go#versions
+      - cache restore             # Restore Go modules cache        https://docs.semaphoreci.com/using-semaphore/optimization/cache
+
+# --------------------------------------------------------------------------- #
+# BLOCKS                                                                      #
+# --------------------------------------------------------------------------- #
+blocks:
+  # ---------------------------------- #
+  - name: "🛠️ Setup & Dependency Caching"
+    dependencies: []
+    task:
+      jobs:
+        - name: "📦 Install dependencies"
+          commands:
+            - go mod download
+            - cache store          # Save Go modules cache          https://docs.semaphoreci.com/using-semaphore/languages/go#cache
+
+  # ---------------------------------- #
+  - name: "🔍 Code Quality Checks"
+    dependencies: ["🛠️ Setup & Dependency Caching"]
+    task:
+      jobs:
+        - name: "🎨 go fmt check"
+          commands:
+            - go fmt ./...        # Verify gofmt compliance        
+        - name: "📝 golangci-lint"
+          commands:
+            - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+            - golangci-lint run ./...
+        - name: "🧐 go vet"
+          commands:
+            - go vet ./...        # Static code vetting             https://pkg.go.dev/cmd/vet
+        - name: "🔎 staticcheck"
+          commands:
+            - go install honnef.co/go/tools/cmd/staticcheck@latest
+            - staticcheck ./...
+
+  # ---------------------------------- #
+  - name: "🔒 Security Scanning"
+    dependencies: ["🛠️ Setup & Dependency Caching"]
+    task:
+      jobs:
+        - name: "🛡️ govulncheck"
+          commands:
+            - go install golang.org/x/vuln/cmd/govulncheck@latest
+            - govulncheck ./...   # Scan for known vulnerabilities  https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck
+
+  # ---------------------------------- #
+  - name: "✅ Testing"
+    dependencies: ["🔒 Security Scanning"]
+    task:
+      jobs:
+        - name: "🧪 Run Go Tests"
+          parallelism: 4          # Split tests across 4 jobs       https://docs.semaphoreci.com/using-semaphore/jobs#job-parallelism
+          commands:
+            - go install gotest.tools/gotestsum@latest
+            - packages=$(go list ./... | awk "NR % $SEMAPHORE_JOB_TOTAL == $SEMAPHORE_JOB_INDEX") gotestsum --junitfile reports.xml $packages
+      epilogue:
+        always:
+          commands:
+            - test-results publish reports.xml  # Upload JUnit report         https://docs.semaphoreci.com/using-semaphore/tests/test-reports
+
+  # ---------------------------------- #
+  - name: "🏗️ Build Artifact"
+    dependencies: ["✅ Testing"]
+    task:
+      jobs:
+        - name: "🔨 Compile Go Binary"
+          commands:
+            - go build -o app     # Produce binary artifact         https://go.dev/cmd/go/#hdr-Compile_packages_and_dependencies
+
+  # ---------------------------------- #
+  - name: "🐳 Docker Image Build"
+    dependencies: ["🏗️ Build Artifact"]
+    task:
+      jobs:
+        - name: "🐋 Build & Tag Docker Image"
+          commands:
+            - docker build -t my-app:$SEMAPHORE_GIT_SHA .   # Build container image https://docs.docker.com/engine/reference/commandline/build/
+            - docker tag my-app:$SEMAPHORE_GIT_SHA my-app:latest
+
+# --------------------------------------------------------------------------- #
+# AFTER PIPELINE                                                              #
+# --------------------------------------------------------------------------- #
+after_pipeline:
+  task:
+    jobs:
+      - name: "📊 Publish Test Results"
+        commands:
+          - test-results gen-pipeline-report  # Generate summary report https://docs.semaphoreci.com/reference/test-results/
