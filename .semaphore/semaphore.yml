@@ -73,6 +73,8 @@ blocks:
             - govulncheck ./...
         - name: "Semgrep"
           commands:
+            - sudo apt-get update
+            - sudo apt-get install -y python3-venv
             - python3 -m venv .venv-semgrep
             - . .venv-semgrep/bin/activate
             - python -m pip install --upgrade pip semgrep
