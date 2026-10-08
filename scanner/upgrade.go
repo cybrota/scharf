@@ -36,6 +36,15 @@ var newUpgradeResolver = func() upgradeResolver {
 	return network.NewSHAResolver()
 }
 
+type provenanceUpgradeResolver interface {
+	upgradeResolver
+	Verify(repository, ref, sha string) *network.ProvenanceEvidence
+}
+
+var newVerifiedUpgradeResolver = func() provenanceUpgradeResolver {
+	return network.NewProvenanceResolver()
+}
+
 // PinnedRef is a strict Scharf-formatted pinned action reference.
 type PinnedRef struct {
 	Action  string
@@ -100,6 +109,11 @@ func CollectPinnedRefs(content []byte) []Finding {
 
 // UpgradePinnedSHAs upgrades Scharf-formatted pinned SHAs in workflow files.
 func UpgradePinnedSHAs(path FilePath, cooldownHours int, isDryRun bool) error {
+	return UpgradePinnedSHAsWithOptions(path, cooldownHours, isDryRun, VerificationOptions{})
+}
+
+// UpgradePinnedSHAsWithOptions optionally requires verified existing and candidate commits.
+func UpgradePinnedSHAsWithOptions(path FilePath, cooldownHours int, isDryRun bool, options VerificationOptions) error {
 	abs, err := filepath.Abs(filepath.Join(string(path)))
 	if err != nil {
 		return fmt.Errorf("os: %w", err)
@@ -144,9 +158,14 @@ func UpgradePinnedSHAs(path FilePath, cooldownHours int, isDryRun bool) error {
 		updates = append(updates, workflowUpdate{path: workflowPath, content: content, mode: info.Mode().Perm()})
 	}
 
-	resolver := newUpgradeResolver()
+	var resolver upgradeResolver
+	if options.VerifyProvenance {
+		resolver = newVerifiedUpgradeResolver()
+	} else {
+		resolver = newUpgradeResolver()
+	}
 	for i := range updates {
-		updated, changed, err := upgradePinnedSHAsInContent(updates[i].content, updates[i].path, resolver, cooldownHours, isDryRun)
+		updated, changed, err := upgradePinnedSHAsInContentWithOptions(updates[i].content, updates[i].path, resolver, cooldownHours, isDryRun, options)
 		if err != nil {
 			return err
 		}
@@ -161,6 +180,9 @@ func UpgradePinnedSHAs(path FilePath, cooldownHours int, isDryRun bool) error {
 			if err := os.WriteFile(update.path, update.content, update.mode); err != nil {
 				return fmt.Errorf("writing %s: %w", update.path, err)
 			}
+			if options.VerifyProvenance {
+				fmt.Printf("Wrote verified upgrades to %s\n", update.path)
+			}
 		}
 	}
 
@@ -172,6 +194,10 @@ func UpgradePinnedSHAs(path FilePath, cooldownHours int, isDryRun bool) error {
 }
 
 func upgradePinnedSHAsInContent(content []byte, workflowPath string, resolver upgradeResolver, cooldownHours int, isDryRun bool) ([]byte, bool, error) {
+	return upgradePinnedSHAsInContentWithOptions(content, workflowPath, resolver, cooldownHours, isDryRun, VerificationOptions{})
+}
+
+func upgradePinnedSHAsInContentWithOptions(content []byte, workflowPath string, resolver upgradeResolver, cooldownHours int, isDryRun bool, options VerificationOptions) ([]byte, bool, error) {
 	references, err := parseWorkflowReferences(content)
 	if err != nil {
 		return content, false, fmt.Errorf("parse workflow %s: %w", workflowPath, err)
@@ -191,6 +217,19 @@ func upgradePinnedSHAsInContent(content []byte, workflowPath string, resolver up
 			skippedNonScharf++
 			continue
 		}
+		if options.VerifyProvenance {
+			verified, ok := resolver.(provenanceUpgradeResolver)
+			if !ok {
+				return content, false, fmt.Errorf("provenance verification unavailable for %s", reference.Original)
+			}
+			evidence := verified.Verify(reference.Repository, reference.Ref, reference.Ref)
+			if err := requireProvenance(reference.Original, evidence); err != nil {
+				return content, false, fmt.Errorf("%s:%d: %w", workflowPath, reference.Line, err)
+			}
+			if !provenanceAllowsSHA(evidence, reference.Ref) {
+				return content, false, fmt.Errorf("provenance evidence does not match existing pin %s", reference.Original)
+			}
+		}
 
 		currentVersion, hintStart, hintEnd, hadVersionHint := referenceVersionHint(content, reference)
 		if !hadVersionHint {
@@ -208,9 +247,21 @@ func upgradePinnedSHAsInContent(content []byte, workflowPath string, resolver up
 		}
 
 		result, err := resolver.ResolveNext(reference.Repository, currentVersion, cooldownHours)
+		if options.VerifyProvenance && err != nil {
+			return content, false, fmt.Errorf("%s:%d: verified upgrade of %s: %w", workflowPath, reference.Line, reference.Original, err)
+		}
 		if err != nil || result == nil || result.NextVersion == "" || result.NextSHA == "" {
 			fmt.Printf("%sWarning:%s skipping %s@%s at %s:%d (no resolvable next version)\n", Yellow, Reset, reference.Repository, currentVersion, workflowPath, reference.Line)
 			continue
+		}
+		if options.VerifyProvenance {
+			if err := requireProvenance(reference.Repository+"@"+result.NextVersion, result.Provenance); err != nil {
+				return content, false, fmt.Errorf("%s:%d: %w", workflowPath, reference.Line, err)
+			}
+			if !provenanceAllowsSHA(result.Provenance, result.NextSHA) {
+				return content, false, fmt.Errorf("provenance evidence does not match proposed pin for %s", reference.Original)
+			}
+			fmt.Println(provenanceSummary(result.Provenance))
 		}
 
 		if result.UnderCooldown {
@@ -235,7 +286,12 @@ func upgradePinnedSHAsInContent(content []byte, workflowPath string, resolver up
 		} else if lineEnd := sourceLineEnd(content, reference.ScalarEndOffset); scalarIsLineTerminal(content, reference.ScalarEndOffset, lineEnd) {
 			edits = append(edits, sourceEdit{start: reference.ScalarEndOffset, end: reference.ScalarEndOffset, replacement: " # " + result.NextVersion})
 		}
-		fmt.Printf("Updated %s:%d %s -> %s # %s\n", workflowPath, reference.Line, fromRef, toRef, result.NextVersion)
+		if options.VerifyProvenance {
+			// Repository-wide provenance preflight may still reject another workflow.
+			fmt.Printf("Verified planned update %s:%d %s -> %s # %s\n", workflowPath, reference.Line, fromRef, toRef, result.NextVersion)
+		} else {
+			fmt.Printf("Updated %s:%d %s -> %s # %s\n", workflowPath, reference.Line, fromRef, toRef, result.NextVersion)
+		}
 	}
 
 	if skippedNonScharf > 0 {

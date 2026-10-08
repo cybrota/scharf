@@ -41,12 +41,33 @@ Copyright (c) 2025 Naren Yellavula & Cybrota contributors - https://github.com/c
 var logger = logging.GetLogger(0)
 
 var auditRepository = sc.AuditRepositoryResult
+var auditRepositoryWithOptions = sc.AuditRepositoryResultWithOptions
+var autoFixRepository = sc.AutoFixRepository
+var autoFixRepositoryWithOptions = sc.AutoFixRepositoryWithOptions
 var findRepositories = sc.FindStructured
 var upgradePinnedSHAs = sc.UpgradePinnedSHAs
+var upgradePinnedSHAsWithOptions = sc.UpgradePinnedSHAsWithOptions
 var loadRepositoryPolicy = sc.LoadRepositoryPolicy
 var loadRepositoryPolicyAtRevision = sc.LoadRepositoryPolicyAtRevision
 var classifyRepositoryFindings = sc.ClassifyRepositoryFindings
 var buildRepoPath = sc.BuildRepoPathWithWriter
+
+type upgradeResolver interface {
+	ResolveNext(action string, currentVersion string, cooldownHours int) (*nw.UpgradeResult, error)
+}
+
+type provenanceUpgradeResolver interface {
+	upgradeResolver
+	Verify(repository string, ref string, sha string) *nw.ProvenanceEvidence
+}
+
+var newSHAUpgradeResolver = func() upgradeResolver {
+	return nw.NewSHAResolver()
+}
+
+var newProvenanceUpgradeResolver = func() provenanceUpgradeResolver {
+	return nw.NewProvenanceResolver()
+}
 
 const defaultUpgradeCooldownHours = 24
 
@@ -81,6 +102,7 @@ func cliVersion() string {
 }
 
 var actionSHAInputRegex = regexp.MustCompile(`^[\w.-]+/[\w.-]+@[a-f0-9]{40}$`)
+var fullSHAReferenceRegex = regexp.MustCompile(`(?i)^[a-f0-9]{40}$`)
 
 func isSHAUpgradeInput(input string) bool {
 	return actionSHAInputRegex.MatchString(input)
@@ -110,6 +132,34 @@ func validateUpgradeInput(input string, fromVersion string) error {
 func addSharedUpgradeFlags(cmd *cobra.Command) {
 	cmd.Flags().Int("cooldown-hours", defaultUpgradeCooldownHours, "Warn when next version is under cooldown age in hours")
 	cmd.Flags().Bool("dry-run", false, "Preview changes without writing files")
+	cmd.Flags().Bool("verify-provenance", false, "Verify that action SHAs belong to current upstream history before upgrading")
+}
+
+func writeUpgradeProvenance(writer io.Writer, label string, evidence *nw.ProvenanceEvidence) {
+	if evidence == nil {
+		fmt.Fprintf(writer, "%s provenance: unavailable\n", label)
+		return
+	}
+	fmt.Fprintf(writer, "%s provenance: %s; review required: %t\n", label, evidence.Status, evidence.RequiresReview)
+	fmt.Fprintf(writer, "  Target: %s@%s (repository ID %d)\n", evidence.Repository, evidence.SHA, evidence.RepositoryID)
+	if evidence.Previous != nil {
+		fmt.Fprintf(writer, "  Previous: %s@%s (repository ID %d, checked %s)\n", evidence.Previous.Repository, evidence.Previous.SHA, evidence.Previous.RepositoryID, evidence.Previous.CheckedAt)
+	}
+	if evidence.Reason != "" {
+		fmt.Fprintf(writer, "  Evidence: %s\n", evidence.Reason)
+	}
+	for _, ref := range evidence.SupportingRefs {
+		fmt.Fprintf(writer, "  Upstream: %s@%s\n", ref.Ref, ref.SHA)
+	}
+	if evidence.CheckedAt != "" {
+		fmt.Fprintf(writer, "  Checked: %s\n", evidence.CheckedAt)
+	}
+}
+
+func allowsVerifiedUpgrade(evidence *nw.ProvenanceEvidence, sha string) bool {
+	// Identity is validated by the resolver, which can follow a legitimate rename.
+	return evidence != nil && evidence.AllowsUpdate() && fullSHAReferenceRegex.MatchString(sha) &&
+		evidence.RepositoryID > 0 && evidence.Repository != "" && strings.EqualFold(evidence.SHA, sha)
 }
 
 func writeToJSON(inv *sc.InventoryResult) error {
@@ -198,8 +248,12 @@ func writePolicyReport(cmd *cobra.Command, report *sc.PolicyReport, format, dest
 		return err
 	case "sarif":
 		return sc.WriteSARIF(writer, report)
+	case "json":
+		encoder := json.NewEncoder(writer)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(report)
 	default:
-		return fmt.Errorf("invalid --out value %q: valid values are human, github, and sarif", format)
+		return fmt.Errorf("invalid --out value %q: valid values are human, github, sarif, and json", format)
 	}
 }
 
@@ -209,7 +263,7 @@ func newRootCmd() *cobra.Command {
 
 	var cmdAudit = &cobra.Command{
 		Use:   "audit",
-		Short: "🥽 Audit a local or remote Git repository to identify vulnerable actions with mutable references: 'scharf audit <repo>|<url>'",
+		Short: "🥽 Audit a local or remote Git repository to identify actions with mutable references: 'scharf audit <repo>|<url>'",
 		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🥽 Audit the actions and raise error if any mutable references found. Good used with Ci/CD pipelines: 'scharf audit <repo>|<url>'`),
 		Args:  cobra.MinimumNArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -224,8 +278,8 @@ func newRootCmd() *cobra.Command {
 			}
 			outputFormat, _ := cmd.Flags().GetString("out")
 			outputPath, _ := cmd.Flags().GetString("output")
-			if outputFormat != "human" && outputFormat != "github" && outputFormat != "sarif" {
-				return fmt.Errorf("invalid --out value %q: valid values are human, github, and sarif", outputFormat)
+			if outputFormat != "human" && outputFormat != "github" && outputFormat != "sarif" && outputFormat != "json" {
+				return fmt.Errorf("invalid --out value %q: valid values are human, github, sarif, and json", outputFormat)
 			}
 			policyPath, _ := cmd.Flags().GetString("policy")
 			policyRef, _ := cmd.Flags().GetString("policy-from-ref")
@@ -260,8 +314,19 @@ func newRootCmd() *cobra.Command {
 				return errors.New("--changed-lines requires --baseline-ref or baseline.ref in policy")
 			}
 
-			result, scanErr := auditRepository(*rp)
+			verifyProvenance, _ := cmd.Flags().GetBool("verify-provenance")
+			var result *sc.AuditResult
+			var scanErr error
+			if verifyProvenance {
+				result, scanErr = auditRepositoryWithOptions(*rp, sc.VerificationOptions{VerifyProvenance: true})
+			} else {
+				result, scanErr = auditRepository(*rp)
+			}
 			if result == nil {
+				if verifyProvenance && scanErr == nil {
+					cmd.SilenceUsage = true
+					return errors.New("provenance audit returned no result")
+				}
 				return scanErr
 			}
 
@@ -287,7 +352,7 @@ func newRootCmd() *cobra.Command {
 				return fmt.Errorf("evaluate policy: %w", err)
 			}
 			legacyOutput := outputFormat == "human" && outputPath == "" && policySource == "" &&
-				policyPath == "" && policyRef == "" && len(cliExceptions) == 0 && baselineRef == "" && !changedLinesOnly
+				policyPath == "" && policyRef == "" && len(cliExceptions) == 0 && baselineRef == "" && !changedLinesOnly && !verifyProvenance
 			if legacyOutput {
 				fmt.Fprintf(cmd.OutOrStdout(), "Scan status: %s\n", result.Status)
 				if len(result.Workflows) > 0 {
@@ -325,13 +390,14 @@ func newRootCmd() *cobra.Command {
 	cmdAudit.Flags().StringArray("ignore", nil, "Transient exact owner/repo[/subpath][@ref] or regex:<RE2> exception; repeatable")
 	cmdAudit.Flags().String("baseline-ref", "", "Git revision used to classify existing findings")
 	cmdAudit.Flags().Bool("changed-lines", false, "Enforce only findings on lines changed since the baseline merge base")
-	cmdAudit.Flags().String("out", "human", "Audit output format: human, github, or sarif")
+	cmdAudit.Flags().Bool("verify-provenance", false, "Verify pinned and proposed action SHAs against current upstream history")
+	cmdAudit.Flags().String("out", "human", "Audit output format: human, github, sarif, or json")
 	cmdAudit.Flags().String("output", "", "Write audit output to a file instead of stdout")
 
 	var cmdAutoFix = &cobra.Command{
 		Use:   "autofix",
-		Short: "🪄 Auto-fixes vulnerable third-party GitHub actions with mutable references: 'scharf autofix <repo>|<url>'",
-		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🪄 Auto-fixes vulnerable third-party GitHub actions with mutable references: 'scharf audit <repo>|<url>'`),
+		Short: "🪄 Pins mutable third-party GitHub action references: 'scharf autofix <repo>|<url>'",
+		Long:  fmt.Sprintf("%s\n%s", asciiLogo, `🪄 Pins mutable third-party GitHub action references: 'scharf audit <repo>|<url>'`),
 		Args:  cobra.MinimumNArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			isDryRun := cmd.Flag("dry-run")
@@ -347,7 +413,12 @@ func newRootCmd() *cobra.Command {
 				return err
 			}
 
-			err = sc.AutoFixRepository(*rp, isDR)
+			verifyProvenance, _ := cmd.Flags().GetBool("verify-provenance")
+			if verifyProvenance {
+				err = autoFixRepositoryWithOptions(*rp, isDR, sc.VerificationOptions{VerifyProvenance: true})
+			} else {
+				err = autoFixRepository(*rp, isDR)
+			}
 			if err != nil {
 				cmd.SilenceUsage = true
 				return err
@@ -359,6 +430,7 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 	cmdAutoFix.PersistentFlags().Bool("dry-run", false, "Preview the fixes before actually making the changes")
+	cmdAutoFix.Flags().Bool("verify-provenance", false, "Only pin action SHAs verified against current upstream history")
 
 	var cmdFind = &cobra.Command{
 		Use:   "find",
@@ -437,6 +509,7 @@ func newRootCmd() *cobra.Command {
 			fromVersion, _ := cmd.Flags().GetString("from-version")
 			cooldownHours, _ := cmd.Flags().GetInt("cooldown-hours")
 			isDryRun, _ := cmd.Flags().GetBool("dry-run")
+			verifyProvenance, _ := cmd.Flags().GetBool("verify-provenance")
 
 			if err := validateUpgradeInput(input, fromVersion); err != nil {
 				cmd.SetOut(cmd.ErrOrStderr())
@@ -454,27 +527,59 @@ func newRootCmd() *cobra.Command {
 			}
 
 			currentVersion := refOrSHA
-			if isSHAUpgradeInput(input) {
+			pinnedSHAInput := isSHAUpgradeInput(input) || (verifyProvenance && fullSHAReferenceRegex.MatchString(refOrSHA))
+			if pinnedSHAInput {
+				if strings.TrimSpace(fromVersion) == "" {
+					return errors.New("pinned SHA upgrades require --from-version")
+				}
 				currentVersion = fromVersion
 			}
 
-			resolver := nw.NewSHAResolver()
-			result, err := resolver.ResolveNext(action, currentVersion, cooldownHours)
+			var result *nw.UpgradeResult
+			if verifyProvenance {
+				resolver := newProvenanceUpgradeResolver()
+				if pinnedSHAInput {
+					// The version hint cannot attest to the actual SHA supplied by the user.
+					evidence := resolver.Verify(action, refOrSHA, refOrSHA)
+					writeUpgradeProvenance(cmd.OutOrStdout(), "Current pin", evidence)
+					if !allowsVerifiedUpgrade(evidence, refOrSHA) {
+						cmd.SilenceUsage = true
+						return errors.New("upgrade blocked: current pin lacks matching, update-safe provenance evidence")
+					}
+				}
+				result, err = resolver.ResolveNext(action, currentVersion, cooldownHours)
+			} else {
+				result, err = newSHAUpgradeResolver().ResolveNext(action, currentVersion, cooldownHours)
+			}
 			if err != nil {
+				if verifyProvenance {
+					cmd.SilenceUsage = true
+				}
 				return err
+			}
+			if result == nil {
+				cmd.SilenceUsage = true
+				return errors.New("upgrade resolver returned no result")
+			}
+			if verifyProvenance {
+				writeUpgradeProvenance(cmd.OutOrStdout(), "Proposed upgrade", result.Provenance)
+				if !allowsVerifiedUpgrade(result.Provenance, result.NextSHA) {
+					cmd.SilenceUsage = true
+					return errors.New("upgrade blocked: proposed SHA lacks matching, update-safe provenance evidence")
+				}
 			}
 
 			if result.UnderCooldown {
-				fmt.Printf("%sWarning:%s %s@%s is under cooldown; proceeding with upgrade\n", sc.Yellow, sc.Reset, action, currentVersion)
+				fmt.Fprintf(cmd.OutOrStdout(), "%sWarning:%s %s@%s is under cooldown; proceeding with upgrade\n", sc.Yellow, sc.Reset, action, currentVersion)
 			}
 
 			upgradedPin := fmt.Sprintf("%s@%s # %s", action, result.NextSHA, result.NextVersion)
 			if isDryRun {
-				fmt.Printf("Dry-run: planned upgrade %s -> %s\n", input, upgradedPin)
+				fmt.Fprintf(cmd.OutOrStdout(), "Dry-run: planned upgrade %s -> %s\n", input, upgradedPin)
 				return nil
 			}
 
-			fmt.Println(upgradedPin)
+			fmt.Fprintln(cmd.OutOrStdout(), upgradedPin)
 			return nil
 		},
 	}
@@ -495,7 +600,13 @@ func newRootCmd() *cobra.Command {
 				return err
 			}
 
-			if err := upgradePinnedSHAs(*rp, cooldownHours, isDryRun); err != nil {
+			verifyProvenance, _ := cmd.Flags().GetBool("verify-provenance")
+			if verifyProvenance {
+				err = upgradePinnedSHAsWithOptions(*rp, cooldownHours, isDryRun, sc.VerificationOptions{VerifyProvenance: true})
+			} else {
+				err = upgradePinnedSHAs(*rp, cooldownHours, isDryRun)
+			}
+			if err != nil {
 				cmd.SilenceUsage = true
 				return err
 			}

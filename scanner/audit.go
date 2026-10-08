@@ -103,6 +103,11 @@ func AuditRepository(path FilePath) (*[]Workflow, error) {
 
 // AuditRepositoryResult returns findings, edit metadata, and explicit completion state.
 func AuditRepositoryResult(path FilePath) (*AuditResult, error) {
+	return AuditRepositoryResultWithOptions(path, VerificationOptions{})
+}
+
+// AuditRepositoryResultWithOptions optionally checks provenance of every external reference.
+func AuditRepositoryResultWithOptions(path FilePath, options VerificationOptions) (*AuditResult, error) {
 	abs, err := filepath.Abs(filepath.Join(string(path)))
 	if err != nil {
 		logger.Error("failed to find absolute path", "err", err)
@@ -124,7 +129,13 @@ func AuditRepositoryResult(path FilePath) (*AuditResult, error) {
 	}
 
 	result := &AuditResult{}
-	res := newAuditResolver()
+	var res network.Resolver
+	var verified provenanceResolver
+	if options.VerifyProvenance {
+		verified = newAuditProvenanceResolver()
+	} else {
+		res = newAuditResolver()
+	}
 	// Process each file found in the directory.
 	for _, fileName := range fileNames {
 		f := string(fileName)
@@ -134,9 +145,17 @@ func AuditRepositoryResult(path FilePath) (*AuditResult, error) {
 			continue
 		}
 
-		analysis, scanErr := AnalyzeWorkflow(res, content, filepath.Base(f), f)
-		if analysis != nil && len(analysis.Workflow.Issues) > 0 {
-			result.Workflows = append(result.Workflows, analysis.Workflow)
+		var analysis *WorkflowAnalysis
+		var scanErr error
+		if options.VerifyProvenance {
+			analysis, scanErr = analyzeWorkflowWithProvenance(verified, content, f)
+		} else {
+			analysis, scanErr = AnalyzeWorkflow(res, content, filepath.Base(f), f)
+		}
+		if analysis != nil && len(analysis.Findings) > 0 {
+			if len(analysis.Workflow.Issues) > 0 {
+				result.Workflows = append(result.Workflows, analysis.Workflow)
+			}
 			result.Details = append(result.Details, analysis.Findings...)
 			result.analyses = append(result.analyses, analysis)
 		}
@@ -152,9 +171,23 @@ func AuditRepositoryResult(path FilePath) (*AuditResult, error) {
 // AutoFixRepository tries to match and replace third-party action references with SHA
 // It uses SHA resolution to find accurate SHA
 func AutoFixRepository(path FilePath, isDryRun bool) error {
-	result, err := AuditRepositoryResult(path)
+	return AutoFixRepositoryWithOptions(path, isDryRun, VerificationOptions{})
+}
+
+// AutoFixRepositoryWithOptions refuses all writes when required provenance cannot be verified.
+func AutoFixRepositoryWithOptions(path FilePath, isDryRun bool, options VerificationOptions) error {
+	result, err := AuditRepositoryResultWithOptions(path, options)
 	if err != nil {
 		return err
+	}
+	if options.VerifyProvenance {
+		// Preflight the complete repository before changing any workflow file.
+		for _, finding := range result.Details {
+			fmt.Println(provenanceSummary(finding.Provenance))
+			if err := requireProvenance(finding.Original, finding.Provenance); err != nil {
+				return fmt.Errorf("%s:%d: %w", finding.FilePath, finding.Line, err)
+			}
+		}
 	}
 
 	for _, analysis := range result.analyses {

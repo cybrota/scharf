@@ -119,7 +119,7 @@ func getRefList(action string, kind string) ([]BranchOrTag, error) {
 	return b, nil
 }
 
-// SHAResolver resolves a given action to it's safe SHA commit
+// SHAResolver resolves a ref to an immutable SHA; it does not verify provenance.
 type SHAResolver struct {
 	cache map[string]string
 }
@@ -130,6 +130,7 @@ func (s SHAResolver) ListTags(action string) ([]BranchOrTag, error) {
 
 // UpgradeResult holds the details needed for pinned SHA upgrade flows.
 type UpgradeResult struct {
+	Provenance     *ProvenanceEvidence `json:"provenance,omitempty"`
 	Action         string
 	CurrentVersion string
 	CurrentSHA     string

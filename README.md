@@ -207,3 +207,11 @@ Whose code am I running in GitHub Actions?
 
 GitHub CVE: tj-actions changed-files through 45.0.7 allows remote attackers to discover secrets by reading action logs
 * https://github.com/advisories/ghsa-mrrh-fwg8-r2c3
+
+### Optional upstream provenance verification
+
+Use `--verify-provenance` with `audit`, `autofix`, `upgrade`, or `upgrade-all-sha`
+to require fresh upstream branch-history evidence and detect repository identity
+and reference changes. Existing behavior remains immutability-only by default.
+See [provenance verification](docs/provenance.md) for evidence, request limits,
+review requirements and limitations. Verification does not establish benign code.

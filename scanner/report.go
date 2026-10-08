@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/cybrota/scharf/network"
 )
 
 const sarifSchema = "https://json.schemastore.org/sarif-2.1.0.json"
@@ -72,7 +74,8 @@ func FormatGitHubAnnotations(report *PolicyReport) string {
 
 func annotationLevel(finding EvaluatedFinding) string {
 	if finding.State == PolicyFindingExcepted || finding.State == PolicyFindingIgnored ||
-		finding.State == PolicyFindingBaseline || finding.State == PolicyFindingUnchanged {
+		finding.State == PolicyFindingBaseline || finding.State == PolicyFindingUnchanged ||
+		finding.State == PolicyFindingVerified {
 		return "notice"
 	}
 	if finding.Severity == "warning" {
@@ -106,6 +109,15 @@ func WriteSARIF(writer io.Writer, report *PolicyReport) error {
 			Help:                 sarifMessage{Text: "Pin the reference to the resolved commit SHA or request a policy exception with owner, rationale, approval, and expiration."},
 			DefaultConfiguration: sarifConfiguration{Level: sarifLevel(finding.Severity)},
 		}
+		if finding.RuleID == ProvenanceRuleID {
+			rulesByID[finding.RuleID] = sarifReportingDescriptor{
+				ID:                   ProvenanceRuleID,
+				ShortDescription:     sarifMessage{Text: "GitHub Actions upstream SHA provenance"},
+				FullDescription:      sarifMessage{Text: "Verify repository identity and commit reachability from current upstream branches. Verification is bounded evidence, not proof that code is safe."},
+				Help:                 sarifMessage{Text: "Review unverified, identity-mismatch, or moved-reference evidence before accepting an update."},
+				DefaultConfiguration: sarifConfiguration{Level: "error"},
+			}
+		}
 		result := sarifResult{
 			RuleID:  finding.RuleID,
 			Level:   sarifFindingLevel(finding),
@@ -116,9 +128,12 @@ func WriteSARIF(writer io.Writer, report *PolicyReport) error {
 					StartLine:   finding.Reference.Line,
 					StartColumn: finding.Reference.Column,
 					EndLine:     finding.Reference.Line,
-					EndColumn:   finding.Reference.Column + utf8.RuneCountInString(finding.Reference.SourceText),
+					EndColumn:   sarifEndColumn(finding.Reference),
 				},
 			}}},
+		}
+		if finding.Reference.Provenance != nil {
+			result.Properties = &sarifResultProperties{Provenance: finding.Reference.Provenance}
 		}
 		if finding.Classification.Classified {
 			if finding.Classification.New {
@@ -130,7 +145,7 @@ func WriteSARIF(writer io.Writer, report *PolicyReport) error {
 		if finding.State == PolicyFindingExcepted || finding.State == PolicyFindingIgnored {
 			result.Suppressions = []sarifSuppression{{Kind: "external", Status: "accepted", Justification: finding.Message}}
 		}
-		if replacement, ok := suggestedReference(finding.Reference); ok &&
+		if replacement, ok := suggestedReference(finding.Reference); ok && finding.RuleID != ProvenanceRuleID &&
 			(finding.State == PolicyFindingViolation || finding.State == PolicyFindingExpired) {
 			result.Fixes = []sarifFix{{
 				Description: sarifMessage{Text: finding.Remediation},
@@ -198,6 +213,13 @@ func WriteSARIF(writer io.Writer, report *PolicyReport) error {
 	return encoder.Encode(log)
 }
 
+func sarifEndColumn(finding ReferenceFinding) int {
+	if finding.SourceText == "" {
+		return 0
+	}
+	return finding.Column + utf8.RuneCountInString(finding.SourceText)
+}
+
 func sarifLevel(severity string) string {
 	if severity == "warning" || severity == "note" {
 		return severity
@@ -249,13 +271,18 @@ type sarifConfiguration struct {
 }
 
 type sarifResult struct {
-	RuleID        string             `json:"ruleId"`
-	Level         string             `json:"level"`
-	Message       sarifMessage       `json:"message"`
-	Locations     []sarifLocation    `json:"locations,omitempty"`
-	BaselineState string             `json:"baselineState,omitempty"`
-	Suppressions  []sarifSuppression `json:"suppressions,omitempty"`
-	Fixes         []sarifFix         `json:"fixes,omitempty"`
+	RuleID        string                 `json:"ruleId"`
+	Level         string                 `json:"level"`
+	Message       sarifMessage           `json:"message"`
+	Locations     []sarifLocation        `json:"locations,omitempty"`
+	BaselineState string                 `json:"baselineState,omitempty"`
+	Suppressions  []sarifSuppression     `json:"suppressions,omitempty"`
+	Fixes         []sarifFix             `json:"fixes,omitempty"`
+	Properties    *sarifResultProperties `json:"properties,omitempty"`
+}
+
+type sarifResultProperties struct {
+	Provenance *network.ProvenanceEvidence `json:"provenance"`
 }
 
 type sarifMessage struct {
