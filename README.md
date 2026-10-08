@@ -109,6 +109,26 @@ scharf audit . --baseline-ref origin/main --out sarif --output scharf.sarif --ra
 
 Scharf discovers `.scharf-policy.yml` for advisory audits. Enforcing `--raise-error` uses the secure default unless you select an explicit policy or load `.scharf-policy.yml` from a trusted revision with `--policy-from-ref`. See [Policy and PR feedback](docs/policy.md) for the schema, precedence rules, expiration behavior, rollout modes, and SARIF integration.
 
+### Read-only transitive dependency audit
+
+`scharf audit ./repository --dependencies --out json` follows declarative `uses`
+edges through composite actions and reusable workflows at resolved commits. Use
+`--out human` or `--out sarif` for other report formats and `--raise-error` to fail
+on mutable graph edges. API access uses `GITHUB_TOKEN` when available; it never
+executes downloaded actions. Normal audit behavior is unchanged.
+
+The graph includes original references, resolved commits and each caller chain.
+Inaccessible metadata, ambiguous workspace-relative actions, cycles and exhausted
+budgets are **incomplete**, never clean. `$/` uses defining-repository semantics
+(requires runner 2.336.0+); `./` in remote composite actions needs workspace context
+and is left unresolved. Local workflow calls use their defining repository.
+
+This mode does not apply policy exceptions/baselines or perform autofixes. Run the
+normal policy audit separately. Docker image references are marked not traversed (image auditing is separate work).
+It excludes shell/JavaScript downloads, package and container contents; a pinned graph is not a trust assessment. See
+[ADR 004](docs/adr/004-declarative-dependency-traversal.md) for budgets and limits.
+
+
 ### 3. Find Across Many Repos
 Point Scharf at a directory of cloned repositories to scan multiple projects:
 ```sh
@@ -207,22 +227,3 @@ Whose code am I running in GitHub Actions?
 
 GitHub CVE: tj-actions changed-files through 45.0.7 allows remote attackers to discover secrets by reading action logs
 * https://github.com/advisories/ghsa-mrrh-fwg8-r2c3
-
-### Read-only transitive dependency audit
-
-`scharf audit ./repository --dependencies --out json` follows declarative `uses`
-edges through composite actions and reusable workflows at resolved commits. Use
-`--out human` or `--out sarif` for other report formats and `--raise-error` to fail
-on mutable graph edges. API access uses `GITHUB_TOKEN` when available; it never
-executes downloaded actions. Normal audit behavior is unchanged.
-
-The graph includes original references, resolved commits and each caller chain.
-Inaccessible metadata, ambiguous workspace-relative actions, cycles and exhausted
-budgets are **incomplete**, never clean. `$/` uses defining-repository semantics
-(requires runner 2.336.0+); `./` in remote composite actions needs workspace context
-and is left unresolved. Local workflow calls use their defining repository.
-
-This mode does not apply policy exceptions/baselines or perform autofixes. Run the
-normal policy audit separately. Docker image references are marked not traversed (image auditing is separate work).
-It excludes shell/JavaScript downloads, package and container contents; a pinned graph is not a trust assessment. See
-[ADR 004](docs/adr/004-declarative-dependency-traversal.md) for budgets and limits.
