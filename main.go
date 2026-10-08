@@ -222,6 +222,10 @@ func newRootCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolve repository path: %w", err)
 			}
+			dependencies, _ := cmd.Flags().GetBool("dependencies")
+			if dependencies {
+				return runDependencyAudit(cmd, repoRoot)
+			}
 			outputFormat, _ := cmd.Flags().GetString("out")
 			outputPath, _ := cmd.Flags().GetString("output")
 			if outputFormat != "human" && outputFormat != "github" && outputFormat != "sarif" {
@@ -327,6 +331,7 @@ func newRootCmd() *cobra.Command {
 	cmdAudit.Flags().Bool("changed-lines", false, "Enforce only findings on lines changed since the baseline merge base")
 	cmdAudit.Flags().String("out", "human", "Audit output format: human, github, or sarif")
 	cmdAudit.Flags().String("output", "", "Write audit output to a file instead of stdout")
+	cmdAudit.Flags().Bool("dependencies", false, "Read-only transitive uses graph (human, json or sarif; no policy/autofix)")
 
 	var cmdAutoFix = &cobra.Command{
 		Use:   "autofix",
