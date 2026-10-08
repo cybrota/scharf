@@ -11,19 +11,26 @@ project_name: scharf
 
 before:
   hooks:
-    # You may remove this if you don't use go modules.
-    - go mod tidy
+    # Version metadata is the only generated source; release tests use it too.
     - >-
       sh -c 'printf "%s\n" "{"
       "  \"version\": \"{{ .Version }}\","
       "  \"commit\": \"{{ .FullCommit }}\","
-      "  \"date\": \"{{ .Date }}\""
+      "  \"date\": \"{{ .CommitDate }}\""
       "}" > version.json'
-    # you may remove this if you don't need go generate
-    - go generate ./...
+    - go mod download
+    - go mod verify
+    - go test ./...
+    - go test -race ./...
+    - go vet ./...
+    - git diff --exit-code -- . ':!version.json'
+    - git diff --cached --exit-code
 
 builds:
-  - env:
+  - flags: [-trimpath]
+    ldflags: [-s -w]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    env:
       - CGO_ENABLED=0
     goos:
       - linux
@@ -44,8 +51,14 @@ archives:
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
     files:
-      - LICENSE
-      - README.md
+      - src: LICENSE
+        info:
+          mtime: "{{ .CommitDate }}"
+          mode: 0644
+      - src: README.md
+        info:
+          mtime: "{{ .CommitDate }}"
+          mode: 0644
 
 changelog:
   sort: asc
