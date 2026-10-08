@@ -22,6 +22,9 @@ reachable from a current branch in the intended upstream repository. Evidence
 records the canonical repository name, stable numeric repository ID, check time,
 SHA and exact supporting branch tip. Tags are resolved through annotated tag
 objects when needed; tags alone are not the membership-proof set.
+Before accepting evidence, Scharf rechecks the requested repository path and any
+distinct canonical path against the starting identity. A changed ID blocks the
+result; an unavailable recheck or a concurrent rename requires a fresh run.
 
 Existing full-SHA pins are checked too. A fork-only commit being addressable
 through `/repos/owner/repo/commits/<sha>` is not sufficient proof. Conversely,
@@ -40,7 +43,13 @@ reported as `moved-reference` with `requires_review: false`. A moved patch tag,
 non-forward change, tag/branch namespace change, or uncheckable prior ancestry requires review.
 
 Autofix and upgrades refuse unknown or review-required evidence before writing
-workflow changes. Dry runs enforce the same checks. Audit includes the evidence
+workflow changes. They also recheck the complete scanned workflow file set and
+contents after verification; concurrent edits, added files or removed files
+require a fresh run before any planned writes begin. Each edited file is checked
+again before writing. Dry runs enforce the same checks. These checks do not lock
+the working tree or make writes across multiple files transactional: avoid
+concurrent editors, and inspect the working tree after a filesystem write error.
+Audit includes the evidence
 and reports unsafe provenance as a violation; use `--raise-error` to make audit
 policy violations fail CI.
 
@@ -65,3 +74,6 @@ An exact positive branch proof can be returned before enumeration finishes;
 exhausted limits without proof return unverified. Tag-only release histories,
 deleted branches and history rewrites can therefore need manual investigation.
 No cached or stale evidence is promoted to a current result.
+GitHub's separate identity, ref and branch responses are not an atomic snapshot.
+The final identity checks detect lasting path replacement, but cannot detect a
+path that changes to another repository and back between those checks.

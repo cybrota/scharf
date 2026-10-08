@@ -159,7 +159,7 @@ func TestProvenanceIdentityChanges(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			resolver := fakeProvenance(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/owner/action":
+				case "/owner/action", "/new-owner/renamed":
 					provenanceIdentity(w, tc.id, "new-owner/renamed")
 				case "/new-owner/renamed/branches":
 					provenanceBranch(w, provenanceTestSHA)
@@ -584,5 +584,133 @@ func TestProvenanceTagPaginationIsBounded(t *testing.T) {
 				t.Fatalf("lost paginated tags: %d", len(tags))
 			}
 		})
+	}
+}
+
+func TestProvenanceRejectsIdentityReplacementDuringVerification(t *testing.T) {
+	for _, mode := range []string{"pin", "mutable", "redirected-input", "canonical-path"} {
+		t.Run(mode, func(t *testing.T) {
+			canonical := "owner/action"
+			if mode == "redirected-input" || mode == "canonical-path" {
+				canonical = "new-owner/action"
+			}
+			proofRead := false
+			resolver := fakeProvenance(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/owner/action", "/new-owner/action":
+					id := int64(1)
+					if proofRead && (mode == "pin" || mode == "mutable" ||
+						mode == "redirected-input" && r.URL.Path == "/owner/action" ||
+						mode == "canonical-path" && r.URL.Path == "/new-owner/action") {
+						id = 2
+					}
+					provenanceIdentity(w, id, canonical)
+				case "/" + canonical + "/git/ref/tags/v1":
+					provenanceJSON(w, map[string]any{"object": provenanceGitObject{SHA: provenanceTestSHA, Type: "commit"}})
+				case "/" + canonical + "/branches":
+					// The path now addresses a replacement repository, but its
+					// branch response contains no repository ID to reveal that.
+					proofRead = true
+					provenanceBranch(w, provenanceTestSHA)
+				default:
+					t.Errorf("unexpected request %s", r.URL)
+					http.NotFound(w, r)
+				}
+			})
+			var evidence *ProvenanceEvidence
+			if mode == "mutable" {
+				_, evidence, _ = resolver.ResolveWithProvenance("owner/action@v1")
+			} else {
+				evidence = resolver.Verify("owner/action", provenanceTestSHA, provenanceTestSHA)
+			}
+			if evidence.AllowsUpdate() || evidence.Status != ProvenanceIdentityMismatch || !evidence.RequiresReview {
+				t.Fatalf("mixed repository identities accepted: %+v", evidence)
+			}
+			if _, err := os.Stat(resolver.statePath); !os.IsNotExist(err) {
+				t.Fatalf("mixed-identity observation persisted: %v", err)
+			}
+		})
+	}
+}
+
+func TestProvenanceFinalIdentityCheckFailsClosed(t *testing.T) {
+	for _, failure := range []string{"rate-limited", "missing-id", "malformed-json", "renamed-during-proof"} {
+		t.Run(failure, func(t *testing.T) {
+			identityReads := 0
+			resolver := fakeProvenance(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/owner/action":
+					identityReads++
+					if identityReads == 1 {
+						provenanceIdentity(w, 1, "owner/action")
+						return
+					}
+					switch failure {
+					case "rate-limited":
+						w.WriteHeader(http.StatusTooManyRequests)
+					case "missing-id":
+						provenanceIdentity(w, 0, "owner/action")
+					case "malformed-json":
+						_, _ = fmt.Fprint(w, "invalid JSON")
+					case "renamed-during-proof":
+						provenanceIdentity(w, 1, "new-owner/renamed")
+					}
+				case "/owner/action/branches":
+					provenanceBranch(w, provenanceTestSHA)
+				default:
+					t.Errorf("unexpected request %s", r.URL)
+					http.NotFound(w, r)
+				}
+			})
+			writeProvenanceHistory(t, resolver, provenanceTestSHA, provenanceTestSHA, 1)
+			before, err := os.ReadFile(resolver.statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			evidence := resolver.Verify("owner/action", provenanceTestSHA, provenanceTestSHA)
+			if identityReads != 2 || evidence.AllowsUpdate() || evidence.Status != ProvenanceUnverified || !evidence.RequiresReview {
+				t.Fatalf("incomplete final identity accepted: %+v, reads=%d", evidence, identityReads)
+			}
+			after, err := os.ReadFile(resolver.statePath)
+			if err != nil || string(after) != string(before) {
+				t.Fatalf("failed recheck overwrote prior history: %s, %v", after, err)
+			}
+		})
+	}
+}
+
+func TestProvenanceIdentityRecheckSharesRequestBudget(t *testing.T) {
+	requests := 0
+	resolver := fakeProvenance(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		switch {
+		case r.URL.Path == "/owner/action":
+			provenanceIdentity(w, 1, "owner/action")
+		case r.URL.Path == "/owner/action/branches":
+			count := 100
+			if r.URL.Query().Get("page") == "2" {
+				count = 26
+			}
+			branches := make([]BranchOrTag, count)
+			for i := range branches {
+				branches[i] = BranchOrTag{Name: fmt.Sprintf("branch-%d", i), Commit: Commit{Sha: provenanceTestNext}}
+			}
+			if count == 26 {
+				branches[25].Commit.Sha = provenanceTestSHA
+			}
+			provenanceJSON(w, branches)
+		case strings.Contains(r.URL.Path, "/compare/"):
+			provenanceJSON(w, map[string]any{"status": "diverged", "merge_base_commit": Commit{Sha: provenanceTestTag}})
+		default:
+			t.Errorf("unexpected request %s", r.URL)
+			http.NotFound(w, r)
+		}
+	})
+	evidence := resolver.Verify("owner/action", provenanceTestSHA, provenanceTestSHA)
+	if requests != provenanceMaxRequests || evidence.AllowsUpdate() || evidence.Status != ProvenanceUnverified || !strings.Contains(evidence.Reason, "request limit") {
+		t.Fatalf("final identity check escaped budget or allowed incomplete proof: %+v, requests=%d", evidence, requests)
+	}
+	if _, err := os.Stat(resolver.statePath); !os.IsNotExist(err) {
+		t.Fatalf("incomplete observation persisted: %v", err)
 	}
 }

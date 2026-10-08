@@ -20,14 +20,18 @@ import (
 )
 
 type fakeProvenanceResolver struct {
-	evidence map[string]*network.ProvenanceEvidence
-	errors   map[string]error
-	verified []string
-	resolved []string
+	evidence  map[string]*network.ProvenanceEvidence
+	errors    map[string]error
+	verified  []string
+	resolved  []string
+	onResolve func(string)
 }
 
 func (f *fakeProvenanceResolver) ResolveWithProvenance(action string) (string, *network.ProvenanceEvidence, error) {
 	f.resolved = append(f.resolved, action)
+	if f.onResolve != nil {
+		f.onResolve(action)
+	}
 	evidence := f.evidence[action]
 	if evidence == nil {
 		return "", nil, fmt.Errorf("no fixture for %s", action)
@@ -258,10 +262,14 @@ type fakeVerifiedUpgradeResolver struct {
 	fakeUpgradeResolver
 	evidence map[string]*network.ProvenanceEvidence
 	verified []string
+	onVerify func(string)
 }
 
 func (f *fakeVerifiedUpgradeResolver) Verify(repository, ref, sha string) *network.ProvenanceEvidence {
 	f.verified = append(f.verified, repository+"@"+ref+":"+sha)
+	if f.onVerify != nil {
+		f.onVerify(repository)
+	}
 	return f.evidence[repository+"@"+ref]
 }
 
@@ -417,5 +425,172 @@ func TestUnverifiedMutableReferenceHasNoSARIFEdit(t *testing.T) {
 	}
 	if strings.Contains(output.String(), `"fixes"`) {
 		t.Fatalf("unverified candidate offered automatic edit: %s", output.String())
+	}
+}
+
+func TestProvenanceAutofixRejectsConcurrentWorkflowChanges(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dry-run-%t", dryRun), func(t *testing.T) {
+			repo := t.TempDir()
+			initGitRepo(t, repo)
+			sha := strings.Repeat("a", 40)
+			original := "jobs:\n  test:\n    steps:\n      - uses: owner/safe@v1\n"
+			file := writeWorkflow(t, repo, original)
+			concurrent := original + "      - uses: owner/unchecked@" + strings.Repeat("b", 40) + "\n"
+			resolver := &fakeProvenanceResolver{
+				evidence: map[string]*network.ProvenanceEvidence{"owner/safe@v1": verifiedEvidence("owner/safe", "v1", sha)},
+				onResolve: func(string) {
+					if err := os.WriteFile(file, []byte(concurrent), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				},
+			}
+			installAuditProvenanceResolver(t, resolver)
+			err := AutoFixRepositoryWithOptions(FilePath(repo), dryRun, VerificationOptions{VerifyProvenance: true})
+			if err == nil || !strings.Contains(err.Error(), "changed") {
+				t.Fatalf("concurrent unverified reference was accepted: %v", err)
+			}
+			got, err := os.ReadFile(file)
+			if err != nil || string(got) != concurrent {
+				t.Fatalf("concurrent edit was overwritten or partially fixed: %s, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestVerifiedUpgradeRejectsConcurrentWorkflowChanges(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dry-run-%t", dryRun), func(t *testing.T) {
+			repo := t.TempDir()
+			initGitRepo(t, repo)
+			current, next := strings.Repeat("a", 40), strings.Repeat("b", 40)
+			original := "jobs:\n  test:\n    steps:\n      - uses: owner/safe@" + current + " # v1\n"
+			file := writeWorkflow(t, repo, original)
+			concurrent := original + "      - run: echo concurrent-user-edit\n"
+			resolver := &fakeVerifiedUpgradeResolver{
+				fakeUpgradeResolver: fakeUpgradeResolver{results: map[string]*network.UpgradeResult{"owner/safe@v1": {NextVersion: "v2", NextSHA: next, Provenance: verifiedEvidence("owner/safe", "v2", next)}}},
+				evidence:            map[string]*network.ProvenanceEvidence{"owner/safe@" + current: verifiedEvidence("owner/safe", current, current)},
+				onVerify: func(string) {
+					if err := os.WriteFile(file, []byte(concurrent), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				},
+			}
+			previous := newVerifiedUpgradeResolver
+			newVerifiedUpgradeResolver = func() provenanceUpgradeResolver { return resolver }
+			t.Cleanup(func() { newVerifiedUpgradeResolver = previous })
+			err := UpgradePinnedSHAsWithOptions(FilePath(repo), 24, dryRun, VerificationOptions{VerifyProvenance: true})
+			if err == nil || !strings.Contains(err.Error(), "changed") {
+				t.Fatalf("stale verified upgrade was accepted: %v", err)
+			}
+			got, err := os.ReadFile(file)
+			if err != nil || string(got) != concurrent {
+				t.Fatalf("concurrent edit was overwritten: %s, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestVerifiedWritesPreflightAllWorkflowSnapshots(t *testing.T) {
+	for _, command := range []string{"autofix", "upgrade"} {
+		for _, change := range []string{"later-reference", "pin-only", "previously-empty", "new-file", "removed-file"} {
+			for _, dryRun := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/dry-run-%t", command, change, dryRun), func(t *testing.T) {
+					repo := t.TempDir()
+					initGitRepo(t, repo)
+					current, next := strings.Repeat("a", 40), strings.Repeat("b", 40)
+					ref := "v1"
+					if command == "upgrade" {
+						ref = current + " # v1"
+					}
+					firstContent := "jobs:\n  test:\n    steps:\n      - uses: owner/safe@" + ref + "\n"
+					first := writeWorkflow(t, repo, firstContent)
+					directory := filepath.Dir(first)
+					later := filepath.Join(directory, "later.yml")
+					laterContent := strings.ReplaceAll(firstContent, "owner/safe", "owner/later")
+					if err := os.WriteFile(later, []byte(laterContent), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					target := later
+					expected := laterContent + "      - uses: owner/unchecked@" + next + "\n"
+					if change != "later-reference" {
+						target = filepath.Join(directory, "before.yml")
+						initial := "jobs:\n  test:\n    steps:\n      - run: echo before\n"
+						if change == "pin-only" {
+							// This pin has no version hint or tags and will not be edited.
+							initial = "jobs:\n  test:\n    steps:\n      - uses: owner/pinned@" + current + "\n"
+						}
+						expected = initial + "      - uses: owner/unchecked@" + next + "\n"
+						if change != "new-file" {
+							if err := os.WriteFile(target, []byte(initial), 0o644); err != nil {
+								t.Fatal(err)
+							}
+						}
+					}
+					mutate := func() {
+						if change == "removed-file" {
+							if err := os.Remove(target); err != nil {
+								t.Fatal(err)
+							}
+						} else if err := os.WriteFile(target, []byte(expected), 0o644); err != nil {
+							t.Fatal(err)
+						}
+					}
+					var err error
+					if command == "autofix" {
+						resolver := &fakeProvenanceResolver{
+							evidence: map[string]*network.ProvenanceEvidence{
+								"owner/safe@v1":           verifiedEvidence("owner/safe", "v1", next),
+								"owner/later@v1":          verifiedEvidence("owner/later", "v1", next),
+								"owner/pinned@" + current: verifiedEvidence("owner/pinned", current, current),
+							},
+							onResolve: func(action string) {
+								if action == "owner/later@v1" {
+									mutate()
+								}
+							},
+						}
+						installAuditProvenanceResolver(t, resolver)
+						err = AutoFixRepositoryWithOptions(FilePath(repo), dryRun, VerificationOptions{VerifyProvenance: true})
+					} else {
+						resolver := &fakeVerifiedUpgradeResolver{
+							fakeUpgradeResolver: fakeUpgradeResolver{results: map[string]*network.UpgradeResult{
+								"owner/safe@v1":  {NextVersion: "v2", NextSHA: next, Provenance: verifiedEvidence("owner/safe", "v2", next)},
+								"owner/later@v1": {NextVersion: "v2", NextSHA: next, Provenance: verifiedEvidence("owner/later", "v2", next)},
+							}},
+							evidence: map[string]*network.ProvenanceEvidence{
+								"owner/safe@" + current:   verifiedEvidence("owner/safe", current, current),
+								"owner/later@" + current:  verifiedEvidence("owner/later", current, current),
+								"owner/pinned@" + current: verifiedEvidence("owner/pinned", current, current),
+							},
+							onVerify: func(repository string) {
+								if repository == "owner/later" {
+									mutate()
+								}
+							},
+						}
+						previous := newVerifiedUpgradeResolver
+						newVerifiedUpgradeResolver = func() provenanceUpgradeResolver { return resolver }
+						t.Cleanup(func() { newVerifiedUpgradeResolver = previous })
+						err = UpgradePinnedSHAsWithOptions(FilePath(repo), 24, dryRun, VerificationOptions{VerifyProvenance: true})
+					}
+					if err == nil || !strings.Contains(err.Error(), "changed") {
+						t.Fatalf("changed repository snapshot was accepted: %v", err)
+					}
+					got, err := os.ReadFile(first)
+					if err != nil || string(got) != firstContent {
+						t.Fatalf("earlier file was partially updated: %s, %v", got, err)
+					}
+					got, err = os.ReadFile(target)
+					if change == "removed-file" {
+						if !os.IsNotExist(err) {
+							t.Fatalf("removed workflow was recreated: %s, %v", got, err)
+						}
+					} else if err != nil || string(got) != expected {
+						t.Fatalf("concurrent edit was overwritten: %s, %v", got, err)
+					}
+				})
+			}
+		}
 	}
 }

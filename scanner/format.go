@@ -128,9 +128,18 @@ func ApplyFixesInFile(wf Workflow, isDryRun bool) error {
 
 // ApplyReferenceFixesInFile applies verified source-span edits without reserializing YAML.
 func ApplyReferenceFixesInFile(filePath string, findings []ReferenceFinding, isDryRun bool) error {
+	return applyReferenceFixesInFile(filePath, findings, isDryRun, nil)
+}
+
+func applyReferenceFixesInFile(filePath string, findings []ReferenceFinding, isDryRun bool, original []byte) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", filePath, err)
+	}
+	if original != nil {
+		if err := requireWorkflowSnapshot(filePath, data, original); err != nil {
+			return err
+		}
 	}
 
 	type sourceEdit struct {

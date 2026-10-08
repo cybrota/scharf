@@ -68,12 +68,14 @@ func AnalyzeWorkflow(res network.Resolver, content []byte, fileName string, file
 
 // AuditResult contains findings and any file errors from one repository scan.
 type AuditResult struct {
-	Status    ScanStatus         `json:"status"`
-	Complete  bool               `json:"complete"`
-	Workflows []Workflow         `json:"findings"`
-	Details   []ReferenceFinding `json:"details,omitempty"`
-	Errors    []ScanError        `json:"errors,omitempty"`
-	analyses  []*WorkflowAnalysis
+	Status            ScanStatus         `json:"status"`
+	Complete          bool               `json:"complete"`
+	Workflows         []Workflow         `json:"findings"`
+	Details           []ReferenceFinding `json:"details,omitempty"`
+	Errors            []ScanError        `json:"errors,omitempty"`
+	analyses          []*WorkflowAnalysis
+	snapshots         map[string][]byte
+	workflowDirectory string
 }
 
 func (result *AuditResult) setStatus() {
@@ -129,6 +131,10 @@ func AuditRepositoryResultWithOptions(path FilePath, options VerificationOptions
 	}
 
 	result := &AuditResult{}
+	if options.VerifyProvenance {
+		result.snapshots = make(map[string][]byte, len(fileNames))
+		result.workflowDirectory = loc
+	}
 	var res network.Resolver
 	var verified provenanceResolver
 	if options.VerifyProvenance {
@@ -148,6 +154,7 @@ func AuditRepositoryResultWithOptions(path FilePath, options VerificationOptions
 		var analysis *WorkflowAnalysis
 		var scanErr error
 		if options.VerifyProvenance {
+			result.snapshots[f] = content
 			analysis, scanErr = analyzeWorkflowWithProvenance(verified, content, f)
 		} else {
 			analysis, scanErr = AnalyzeWorkflow(res, content, filepath.Base(f), f)
@@ -188,11 +195,14 @@ func AutoFixRepositoryWithOptions(path FilePath, isDryRun bool, options Verifica
 				return fmt.Errorf("%s:%d: %w", finding.FilePath, finding.Line, err)
 			}
 		}
+		if err := validateWorkflowSnapshots(result.workflowDirectory, result.snapshots); err != nil {
+			return err
+		}
 	}
 
 	for _, analysis := range result.analyses {
 		fmt.Printf("🪄 Fixing %s%s%s: \n", Cyan, analysis.Workflow.FilePath, Reset)
-		if err := ApplyReferenceFixesInFile(analysis.Workflow.FilePath, analysis.Findings, isDryRun); err != nil {
+		if err := applyReferenceFixesInFile(analysis.Workflow.FilePath, analysis.Findings, isDryRun, result.snapshots[analysis.Workflow.FilePath]); err != nil {
 			return err
 		}
 	}

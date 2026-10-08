@@ -7,7 +7,9 @@
 package scanner
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/cybrota/scharf/network"
@@ -16,6 +18,45 @@ import (
 // VerificationOptions keeps network provenance explicitly opt-in for every command.
 type VerificationOptions struct {
 	VerifyProvenance bool
+}
+
+// validateWorkflowSnapshots binds repository-wide verification to the files that
+// were scanned, including files that originally contained no external actions.
+// Check the whole set before the first write so a stale later file cannot leave
+// earlier workflows partially updated.
+func validateWorkflowSnapshots(directory string, snapshots map[string][]byte) error {
+	files, err := ListWorkflowFiles(FilePath(directory))
+	if err != nil {
+		return fmt.Errorf("workflow files changed during provenance verification: %w", err)
+	}
+	if len(files) != len(snapshots) {
+		return fmt.Errorf("workflow file set changed during provenance verification; retry with fresh evidence")
+	}
+	for _, file := range files {
+		original, ok := snapshots[string(file)]
+		if !ok {
+			return fmt.Errorf("workflow file set changed during provenance verification; retry with fresh evidence")
+		}
+		if err := validateWorkflowSnapshot(string(file), original); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateWorkflowSnapshot(filePath string, original []byte) error {
+	current, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("workflow %s changed during provenance verification: %w", filePath, err)
+	}
+	return requireWorkflowSnapshot(filePath, current, original)
+}
+
+func requireWorkflowSnapshot(filePath string, current, original []byte) error {
+	if !bytes.Equal(current, original) {
+		return fmt.Errorf("workflow %s changed during provenance verification; retry with fresh evidence", filePath)
+	}
+	return nil
 }
 
 type provenanceResolver interface {

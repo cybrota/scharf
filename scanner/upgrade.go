@@ -136,6 +136,7 @@ func UpgradePinnedSHAsWithOptions(path FilePath, cooldownHours int, isDryRun boo
 		changed bool
 	}
 	updates := make([]workflowUpdate, 0, len(fileNames))
+	snapshots := make(map[string][]byte, len(fileNames))
 	for _, fileName := range fileNames {
 		workflowPath := string(fileName)
 		content, err := ReadFile(fileName)
@@ -156,6 +157,9 @@ func UpgradePinnedSHAsWithOptions(path FilePath, cooldownHours int, isDryRun boo
 			return fmt.Errorf("stat %s: %w", workflowPath, err)
 		}
 		updates = append(updates, workflowUpdate{path: workflowPath, content: content, mode: info.Mode().Perm()})
+		if options.VerifyProvenance {
+			snapshots[workflowPath] = content
+		}
 	}
 
 	var resolver upgradeResolver
@@ -172,10 +176,20 @@ func UpgradePinnedSHAsWithOptions(path FilePath, cooldownHours int, isDryRun boo
 		updates[i].content = updated
 		updates[i].changed = changed
 	}
+	if options.VerifyProvenance {
+		if err := validateWorkflowSnapshots(loc, snapshots); err != nil {
+			return err
+		}
+	}
 	if !isDryRun {
 		for _, update := range updates {
 			if !update.changed {
 				continue
+			}
+			if options.VerifyProvenance {
+				if err := validateWorkflowSnapshot(update.path, snapshots[update.path]); err != nil {
+					return err
+				}
 			}
 			if err := os.WriteFile(update.path, update.content, update.mode); err != nil {
 				return fmt.Errorf("writing %s: %w", update.path, err)

@@ -46,6 +46,14 @@ ID is allowed. Ref movement remains visible in evidence:
   reached. A removed ref, 404, API/rate limit or stale state is uncertainty, never
   a claim of compromise.
 
+Before persisting successful evidence, recheck the numeric identity and canonical
+name at the requested repository path and any distinct canonical path used for
+proof. Those requests share the verification request and time budgets. Reject a
+changed ID, and require fresh verification for an unavailable identity response
+or a rename during verification. This prevents lasting path replacements from
+combining one repository's ID with another's branch history, but cannot detect a
+path that changes to another repository and back between API observations.
+
 Observation writes are atomic and private to the user. A short exclusive write
 lock plus comparison with the originally read state rejects concurrent changes
 rather than silently losing historical evidence. Corrupt, unknown-version,
@@ -56,6 +64,15 @@ Audit preserves evidence in JSON, SARIF and human output, including existing
 pins. Autofix preflights evidence before writing; upgrades check the actual
 existing pin separately from its comment hint and verify proposed targets.
 Unknown or review-required evidence cannot authorize an edit.
+
+Retain exact workflow input snapshots during provenance-aware autofix and
+upgrades. After network verification, re-list workflows and compare every
+scanned file, including files without editable references, before starting any
+writes. Recheck each edited file immediately before writing as well. This rejects
+stale preflight results without overwriting concurrent edits or partially applying
+plans when a changed later file is already detectable. It does not add a working
+tree lock or a multi-file transaction; a concurrent writer after the last check
+or an I/O failure during the write phase can still require manual reconciliation.
 
 ## Alternatives and limitations
 

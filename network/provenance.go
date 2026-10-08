@@ -365,6 +365,37 @@ func (s *ProvenanceResolver) verify(repository, ref, sha string, resolve bool) *
 	if !e.AllowsUpdate() {
 		return e
 	}
+	// Ref and branch responses do not carry a repository ID. Recheck both the
+	// requested path (which the workflow will keep using) and any canonical path
+	// used for proof, so a lasting rename/replacement during those calls cannot
+	// bind another repository's history to the ID read at the start.
+	paths := []string{repository}
+	if !strings.EqualFold(repository, repo.FullName) {
+		paths = append(paths, repo.FullName)
+	}
+	for _, path := range paths {
+		var current struct {
+			ID       int64  `json:"id"`
+			FullName string `json:"full_name"`
+		}
+		if err := r.get("/"+path, &current); err != nil {
+			e.Status, e.RequiresReview, e.Reason = ProvenanceUnverified, true, "repository identity recheck unavailable: "+err.Error()
+			return e
+		}
+		if current.ID <= 0 || !validProvenanceRepository(current.FullName) {
+			e.Status, e.RequiresReview, e.Reason = ProvenanceUnverified, true, "repository identity recheck is incomplete"
+			return e
+		}
+		if current.ID != repo.ID {
+			e.Status, e.RequiresReview = ProvenanceIdentityMismatch, true
+			e.Reason = fmt.Sprintf("repository ID changed during verification of %s from %d to %d; review identity before accepting evidence", path, repo.ID, current.ID)
+			return e
+		}
+		if !strings.EqualFold(current.FullName, repo.FullName) {
+			e.Status, e.RequiresReview, e.Reason = ProvenanceUnverified, true, "repository canonical name changed during verification; retry with fresh evidence"
+			return e
+		}
+	}
 	observation := ProvenanceObservation{Repository: e.Repository, RepositoryID: e.RepositoryID, OriginalRef: ref, RefKind: kind, SHA: e.SHA, CheckedAt: e.CheckedAt, SupportingRefs: e.SupportingRefs}
 	if err := saveProvenanceObservation(s.statePath, observations, key, observation); err != nil {
 		e.Status, e.RequiresReview, e.Reason = ProvenanceUnverified, true, "cannot safely persist historical evidence: "+err.Error()
