@@ -18,6 +18,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/cybrota/scharf/network"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -99,23 +100,25 @@ type actionReference struct {
 	Style           yaml.Style
 }
 
-// ReferenceFinding is the structured mutable-reference model used by safe edits.
+// ReferenceFinding is the structured reference model used by audit and safe edits.
 type ReferenceFinding struct {
-	FilePath        string `json:"file"`
-	Line            int    `json:"line"`
-	Column          int    `json:"column"`
-	Repository      string `json:"repository"`
-	Subpath         string `json:"subpath,omitempty"`
-	Ref             string `json:"ref"`
-	Original        string `json:"original"`
-	SourceText      string `json:"source_text,omitempty"`
-	StartOffset     int    `json:"start_offset,omitempty"`
-	EndOffset       int    `json:"end_offset,omitempty"`
-	ScalarEndOffset int    `json:"scalar_end_offset,omitempty"`
-	Editable        bool   `json:"editable"`
-	Description     string `json:"description,omitempty"`
-	FixSHA          string `json:"fix_sha,omitempty"`
-	FixMessage      string `json:"fix_message,omitempty"`
+	FilePath        string                      `json:"file"`
+	Line            int                         `json:"line"`
+	Column          int                         `json:"column"`
+	Repository      string                      `json:"repository"`
+	Subpath         string                      `json:"subpath,omitempty"`
+	Ref             string                      `json:"ref"`
+	Original        string                      `json:"original"`
+	SourceText      string                      `json:"source_text,omitempty"`
+	StartOffset     int                         `json:"start_offset,omitempty"`
+	EndOffset       int                         `json:"end_offset,omitempty"`
+	ScalarEndOffset int                         `json:"scalar_end_offset,omitempty"`
+	Editable        bool                        `json:"editable"`
+	Description     string                      `json:"description,omitempty"`
+	FixSHA          string                      `json:"fix_sha,omitempty"`
+	FixMessage      string                      `json:"fix_message,omitempty"`
+	Pinned          bool                        `json:"pinned,omitempty"`
+	Provenance      *network.ProvenanceEvidence `json:"provenance,omitempty"`
 	style           yaml.Style
 }
 
@@ -135,10 +138,14 @@ func (finding ReferenceFinding) legacy() Finding {
 // ScanWorkflowReferences parses one workflow and returns mutable external uses references.
 // It may return findings together with an error when semantic detection succeeds but a safe edit span cannot be produced.
 func ScanWorkflowReferences(content []byte, filePath string) ([]ReferenceFinding, error) {
+	return scanWorkflowReferences(content, filePath, false)
+}
+
+func scanWorkflowReferences(content []byte, filePath string, includePinned bool) ([]ReferenceFinding, error) {
 	references, scanErr := parseWorkflowReferences(content)
 	findings := make([]ReferenceFinding, 0, len(references))
 	for _, reference := range references {
-		if reference.Pinned {
+		if reference.Pinned && !includePinned {
 			continue
 		}
 		findings = append(findings, ReferenceFinding{
@@ -154,6 +161,7 @@ func ScanWorkflowReferences(content []byte, filePath string) ([]ReferenceFinding
 			EndOffset:       reference.EndOffset,
 			ScalarEndOffset: reference.ScalarEndOffset,
 			Editable:        reference.Editable,
+			Pinned:          reference.Pinned,
 			style:           reference.Style,
 		})
 	}

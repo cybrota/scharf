@@ -128,9 +128,18 @@ func ApplyFixesInFile(wf Workflow, isDryRun bool) error {
 
 // ApplyReferenceFixesInFile applies verified source-span edits without reserializing YAML.
 func ApplyReferenceFixesInFile(filePath string, findings []ReferenceFinding, isDryRun bool) error {
+	return applyReferenceFixesInFile(filePath, findings, isDryRun, nil)
+}
+
+func applyReferenceFixesInFile(filePath string, findings []ReferenceFinding, isDryRun bool, original []byte) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", filePath, err)
+	}
+	if original != nil {
+		if err := requireWorkflowSnapshot(filePath, data, original); err != nil {
+			return err
+		}
 	}
 
 	type sourceEdit struct {
@@ -140,6 +149,17 @@ func ApplyReferenceFixesInFile(filePath string, findings []ReferenceFinding, isD
 	}
 	var edits []sourceEdit
 	for _, finding := range findings {
+		if finding.Provenance != nil {
+			if err := requireProvenance(finding.Original, finding.Provenance); err != nil {
+				return err
+			}
+		}
+		if finding.Pinned || isFullSHA(finding.Ref) {
+			continue
+		}
+		if finding.Provenance != nil && !provenanceAllowsSHA(finding.Provenance, finding.FixSHA) {
+			return fmt.Errorf("provenance evidence does not match proposed pin for %s", finding.Original)
+		}
 		if finding.FixSHA == SHA256NotAvailable {
 			continue
 		}
@@ -179,7 +199,7 @@ func ApplyReferenceFixesInFile(filePath string, findings []ReferenceFinding, isD
 	for _, edit := range edits {
 		updated = append(updated[:edit.start], append([]byte(edit.replacement), updated[edit.end:]...)...)
 	}
-	if isDryRun {
+	if isDryRun || len(edits) == 0 {
 		return nil
 	}
 	info, err := os.Stat(filePath)

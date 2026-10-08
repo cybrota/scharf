@@ -24,6 +24,7 @@ const (
 	PolicyVersion            = 1
 	MutableReferenceRuleID   = "SCHARF001"
 	ScanIncompleteRuleID     = "SCHARF_SCAN_INCOMPLETE"
+	ProvenanceRuleID         = "SCHARF_PROVENANCE"
 	fullCommitSHARequirement = "full-commit-sha"
 	defaultPolicyFileName    = ".scharf-policy.yml"
 )
@@ -90,6 +91,7 @@ const (
 	PolicyFindingBaseline    PolicyFindingState = "baseline"
 	PolicyFindingUnchanged   PolicyFindingState = "unchanged-line"
 	PolicyFindingOutsideRule PolicyFindingState = "outside-policy"
+	PolicyFindingVerified    PolicyFindingState = "verified"
 	PolicyOutcomePass                           = "pass"
 	PolicyOutcomeFail                           = "violations"
 	PolicyOutcomeIncomplete                     = "incomplete"
@@ -363,11 +365,21 @@ func EvaluatePolicy(repoRoot string, audit *AuditResult, policy *Policy, options
 		if len(options.Classifications) > 0 {
 			classification = options.Classifications[i]
 		}
-		evaluated := evaluateFinding(repoRoot, finding, classification, policy, cliExceptions, today, options.ChangedLinesOnly)
-		if evaluated.Blocking {
-			report.ViolationCount++
+		if !finding.Pinned && !isFullSHA(finding.Ref) {
+			evaluated := evaluateFinding(repoRoot, finding, classification, policy, cliExceptions, today, options.ChangedLinesOnly)
+			if evaluated.Blocking {
+				report.ViolationCount++
+			}
+			report.Findings = append(report.Findings, evaluated)
 		}
-		report.Findings = append(report.Findings, evaluated)
+		if finding.Provenance != nil {
+			// Mutable-reference exceptions and baselines never waive provenance review.
+			evaluated := evaluateProvenance(repoRoot, finding)
+			if evaluated.Blocking {
+				report.ViolationCount++
+			}
+			report.Findings = append(report.Findings, evaluated)
+		}
 	}
 	if !report.Complete || report.Status == ScanStatusIncomplete {
 		report.Outcome = PolicyOutcomeIncomplete
@@ -375,6 +387,22 @@ func EvaluatePolicy(repoRoot string, audit *AuditResult, policy *Policy, options
 		report.Outcome = PolicyOutcomeFail
 	}
 	return report, nil
+}
+
+func evaluateProvenance(repoRoot string, finding ReferenceFinding) EvaluatedFinding {
+	verified := finding.Provenance.AllowsUpdate()
+	evaluated := EvaluatedFinding{
+		RuleID: ProvenanceRuleID, FilePath: repositoryRelativePath(repoRoot, finding.FilePath),
+		Reference: finding, State: PolicyFindingViolation, Severity: "error", Blocking: !verified,
+		Message: provenanceSummary(finding.Provenance),
+	}
+	if verified {
+		evaluated.State = PolicyFindingVerified
+		evaluated.Severity = "note"
+	} else {
+		evaluated.Remediation = "Review upstream identity, branch reachability, and reference history before updates."
+	}
+	return evaluated
 }
 
 func evaluateFinding(repoRoot string, finding ReferenceFinding, classification FindingClassification, policy *Policy, cliExceptions []compiledCLIException, today time.Time, changedLinesOnly bool) EvaluatedFinding {
@@ -558,7 +586,8 @@ func remediationForFinding(finding ReferenceFinding) string {
 }
 
 func suggestedReference(finding ReferenceFinding) (string, bool) {
-	if !finding.Editable || !isFullSHA(finding.FixSHA) {
+	if finding.Pinned || isFullSHA(finding.Ref) || !finding.Editable || !isFullSHA(finding.FixSHA) ||
+		(finding.Provenance != nil && !provenanceAllowsSHA(finding.Provenance, finding.FixSHA)) {
 		return "", false
 	}
 	target := finding.Repository
