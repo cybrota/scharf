@@ -1,41 +1,104 @@
-# .github/workflows/release.yml
-name: goreleaser
+name: Release from reviewed version
 
 on:
   push:
-    # run only against tags
-    tags:
-      - "*"
+    branches: [main]
+    paths: [release/version.txt]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .goreleaser.yaml
+      - scripts/release*.py
+      - release/**
 
 permissions:
-  contents: write
-  # packages: write
-  # issues: write
-  # id-token: write
+  contents: read
+
+concurrency:
+  group: scharf-release-${{ github.event_name }}
+  cancel-in-progress: false
 
 jobs:
-  goreleaser:
-    runs-on: ubuntu-latest
+  validate:
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - run: python3 scripts/release.py lint
+      - run: python3 -m unittest discover -s scripts -p 'release_test.py' -v
+
+  snapshot:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
           fetch-depth: 0
-      - name: Set up Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          go-version: stable
-      # More assembly might be required: Docker logins, GPG, etc.
-      # It all depends on your needs.
-      - name: Run GoReleaser
+          go-version-file: go.mod
+          cache: false
+      - name: Validate hooks, tests and all archives without publication
         uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
-          # either 'goreleaser' (default) or 'goreleaser-pro'
           distribution: goreleaser
-          # 'latest', 'nightly', or a semver
-          version: "~> v2"
-          args: release --clean
+          version: v2.16.0
+          args: release --snapshot --clean --skip=publish
+
+  release:
+    needs: validate
+    if: github.repository == 'cybrota/scharf' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write # Atomic tag creation, draft assets, final publication.
+      id-token: write # Short-lived Sigstore signing identity; no stored key.
+      attestations: write # Publish build provenance to GitHub's attestation API.
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release intent and exact commit
+        id: prepare
+        run: python3 scripts/release.py prepare
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Your GoReleaser Pro key, if you are using the 'goreleaser-pro' distribution
-          # GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test exact versioned source and build without publishing
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
+        with:
+          distribution: goreleaser
+          version: v2.16.0
+          args: release --clean --skip=publish
+        env:
+          GORELEASER_CURRENT_TAG: ${{ steps.prepare.outputs.version }}
+      - name: Check exact archive set and hashes
+        run: python3 scripts/release.py assets
+      - name: Attest archives and checksum manifest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/*checksums.txt
+          create-storage-record: false
+      - name: Verify signer identity and source commit before publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for artifact in dist/*.zip dist/*checksums.txt; do
+            gh attestation verify "$artifact" --repo cybrota/scharf \
+              --signer-workflow cybrota/scharf/.github/workflows/release.yml \
+              --source-digest "$GITHUB_SHA" --source-ref refs/heads/main --deny-self-hosted-runners
+          done
+      - name: Publish or safely resume identical draft assets
+        run: python3 scripts/release.py publish
+        env:
+          GH_TOKEN: ${{ github.token }}
