@@ -276,6 +276,10 @@ func newRootCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolve repository path: %w", err)
 			}
+			dependencies, _ := cmd.Flags().GetBool("dependencies")
+			if dependencies {
+				return runDependencyAudit(cmd, repoRoot)
+			}
 			outputFormat, _ := cmd.Flags().GetString("out")
 			outputPath, _ := cmd.Flags().GetString("output")
 			if outputFormat != "human" && outputFormat != "github" && outputFormat != "sarif" && outputFormat != "json" {
@@ -393,6 +397,7 @@ func newRootCmd() *cobra.Command {
 	cmdAudit.Flags().Bool("verify-provenance", false, "Verify pinned and proposed action SHAs against current upstream history")
 	cmdAudit.Flags().String("out", "human", "Audit output format: human, github, sarif, or json")
 	cmdAudit.Flags().String("output", "", "Write audit output to a file instead of stdout")
+	cmdAudit.Flags().Bool("dependencies", false, "Read-only transitive uses graph (human, json or sarif; no policy/autofix)")
 
 	var cmdAutoFix = &cobra.Command{
 		Use:   "autofix",
