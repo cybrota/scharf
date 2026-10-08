@@ -25,9 +25,10 @@ type DependencySource interface {
 }
 
 // DependencyLimits bound expansion, including repeated caller paths and YAML aliases.
+// Nodes counts visited YAML structures, aliases and mapping keys, not just uses edges.
 type DependencyLimits struct{ Depth, Nodes, Bytes int }
 
-func DefaultDependencyLimits() DependencyLimits { return DependencyLimits{12, 500, 8 << 20} }
+func DefaultDependencyLimits() DependencyLimits { return DependencyLimits{12, 5000, 8 << 20} }
 
 type DependencyLocation struct {
 	File   string `json:"file"`
@@ -62,6 +63,7 @@ type dependencyWalker struct {
 	source       DependencySource
 	limits       DependencyLimits
 	bytes, nodes int
+	exhausted    bool
 	cache        map[string][]byte
 	resolved     map[string]string
 	active       map[string]bool
@@ -94,6 +96,9 @@ func AuditDependencies(root string, source DependencySource, limits DependencyLi
 		w.fail(".github/workflows", err)
 	}
 	for _, name := range names {
+		if w.exhausted {
+			break
+		}
 		relative, e := filepath.Rel(abs, string(name))
 		if e != nil {
 			w.fail(string(name), e)
@@ -146,6 +151,19 @@ func dependencyWorkflowFiles(root string, rootFS *os.Root) ([]FilePath, error) {
 }
 func (w *dependencyWalker) fail(file string, err error) {
 	w.report.Errors = append(w.report.Errors, NewScanError(file, err))
+}
+
+func (w *dependencyWalker) consumeNode(d dependencyDocument) bool {
+	if w.exhausted {
+		return false
+	}
+	if w.nodes >= w.limits.Nodes {
+		w.exhausted = true
+		w.fail(d.file, errors.New("dependency node budget exhausted"))
+		return false
+	}
+	w.nodes++
+	return true
 }
 func safeDependencyPath(name string) bool {
 	if name == "" || strings.ContainsAny(name, "\\\x00") || path.IsAbs(name) || path.Clean(name) != name {
@@ -201,6 +219,9 @@ func (w *dependencyWalker) read(d dependencyDocument) ([]byte, error) {
 		return nil, err
 	}
 	if len(b) > w.limits.Bytes-w.bytes {
+		// Failed oversized reads also cost I/O. Stop the whole traversal instead
+		// of repeatedly reading the remaining allowance for every sibling file.
+		w.exhausted = true
 		return nil, errors.New("dependency byte budget exhausted")
 	}
 	w.bytes += len(b)
@@ -208,6 +229,9 @@ func (w *dependencyWalker) read(d dependencyDocument) ([]byte, error) {
 	return b, nil
 }
 func (w *dependencyWalker) walk(d dependencyDocument, chain []DependencyLocation, depth int) {
+	if !w.consumeNode(d) {
+		return
+	}
 	if depth > w.limits.Depth {
 		w.fail(d.file, errors.New("dependency depth budget exhausted"))
 		return
@@ -264,8 +288,14 @@ func (w *dependencyWalker) walk(d dependencyDocument, chain []DependencyLocation
 // Aliases are resolved only at the expected structural position. Cyclic aliases and
 // merges cannot silently omit dependencies: unresolved structures make the scan incomplete.
 func (w *dependencyWalker) node(d dependencyDocument, n *yaml.Node, kind yaml.Kind) *yaml.Node {
+	if !w.consumeNode(d) {
+		return nil
+	}
 	seen := map[*yaml.Node]bool{}
 	for n != nil && n.Kind == yaml.AliasNode {
+		if !w.consumeNode(d) {
+			return nil
+		}
 		if seen[n] {
 			w.fail(d.file, errors.New("cyclic YAML alias"))
 			return nil
@@ -284,6 +314,9 @@ func (w *dependencyWalker) node(d dependencyDocument, n *yaml.Node, kind yaml.Ki
 	if kind == yaml.MappingNode {
 		keys := map[string]bool{}
 		for i := 0; i+1 < len(n.Content); i += 2 {
+			if !w.consumeNode(d) {
+				return nil
+			}
 			if n.Content[i].Kind != yaml.ScalarNode || (n.Content[i].Tag != "!!str" && n.Content[i].Tag != "!!merge") {
 				w.fail(d.file, errors.New("unsupported YAML mapping key"))
 				return nil
@@ -310,6 +343,9 @@ func (w *dependencyWalker) visitJobs(d dependencyDocument, n *yaml.Node, chain [
 		return
 	}
 	for i := 1; i < len(n.Content); i += 2 {
+		if w.exhausted {
+			return
+		}
 		jobD := d
 		if n.Content[i].Kind == yaml.AliasNode && jobD.aliasLine == 0 {
 			jobD.aliasLine = n.Content[i].Line
@@ -347,6 +383,9 @@ func (w *dependencyWalker) visitSteps(d dependencyDocument, n *yaml.Node, chain 
 		return
 	}
 	for _, s := range n.Content {
+		if w.exhausted {
+			return
+		}
 		step := w.node(d, s, yaml.MappingNode)
 		if step == nil {
 			continue
@@ -363,13 +402,6 @@ func (w *dependencyWalker) visitSteps(d dependencyDocument, n *yaml.Node, chain 
 	}
 }
 func (w *dependencyWalker) edge(d dependencyDocument, n *yaml.Node, chain []DependencyLocation, depth int, workflow bool) {
-	w.nodes++
-	if w.nodes > w.limits.Nodes {
-		if w.nodes == w.limits.Nodes+1 {
-			w.fail(d.file, errors.New("dependency node budget exhausted"))
-		}
-		return
-	}
 	loc := DependencyLocation{File: d.file, Line: n.Line, Column: n.Column, Uses: n.Value}
 	if d.aliasLine != 0 {
 		loc.Line = d.aliasLine
@@ -418,6 +450,9 @@ func (w *dependencyWalker) edge(d dependencyDocument, n *yaml.Node, chain []Depe
 		target.file = sub
 		target.commit = ref
 		if !pinned {
+			target.commit = ""
+		}
+		if !pinned && depth < w.limits.Depth {
 			key := repo + "@" + ref
 			sha, ok := w.resolved[key]
 			if !ok {
@@ -448,6 +483,13 @@ func (w *dependencyWalker) edge(d dependencyDocument, n *yaml.Node, chain []Depe
 	}
 	e.Repository = target.repo
 	e.Commit = target.commit
+	if depth >= w.limits.Depth {
+		// Do not resolve refs or prefetch action.yml beyond the traversal boundary.
+		e.Status = "depth-budget-exhausted"
+		w.report.Edges = append(w.report.Edges, e)
+		w.fail(d.file, errors.New("dependency depth budget exhausted"))
+		return
+	}
 	if !workflow {
 		prefix := target.file
 		if prefix != "" {

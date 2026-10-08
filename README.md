@@ -122,6 +122,8 @@ Inaccessible metadata, ambiguous workspace-relative actions, cycles and exhauste
 budgets are **incomplete**, never clean. `$/` uses defining-repository semantics
 (requires runner 2.336.0+); `./` in remote composite actions needs workspace context
 and is left unresolved. Local workflow calls use their defining repository.
+Traversal is capped at depth 12, 5,000 visited YAML structures/aliases/mapping keys
+and 8 MiB of unique metadata, including run-only and malformed alias expansion.
 
 This mode does not apply policy exceptions/baselines or perform autofixes. Run the
 normal policy audit separately. Docker image references are marked not traversed (image auditing is separate work).

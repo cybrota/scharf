@@ -291,3 +291,127 @@ func TestDependencyHumanEscapesUntrustedControlCharacters(t *testing.T) {
 		t.Fatalf("unescaped controls: %q", out.String())
 	}
 }
+
+func TestDependencyNodeBudgetIncludesRunOnlyAliasExpansion(t *testing.T) {
+	root := dependencyFixture(t, "unused")
+	workflow := "jobs:\n  first: &job\n    steps:\n      - run: echo safe\n"
+	if err := os.WriteFile(filepath.Join(root, ".github/workflows/ci.yml"), []byte(workflow), 0600); err != nil {
+		t.Fatal(err)
+	}
+	limits := DefaultDependencyLimits()
+	limits.Nodes = 20
+	if r, err := AuditDependencies(root, dependencyFake(), limits); err != nil || !r.Complete {
+		t.Fatalf("baseline did not fit the budget: %+v, %v", r, err)
+	}
+	workflow += "  second: *job\n  third: *job\n"
+	if err := os.WriteFile(filepath.Join(root, ".github/workflows/ci.yml"), []byte(workflow), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := AuditDependencies(root, dependencyFake(), limits)
+	if err == nil || r.Complete || !strings.Contains(err.Error(), "node budget exhausted") {
+		t.Fatalf("run-only aliases bypassed the expansion budget: %+v, %v", r, err)
+	}
+}
+
+func TestDependencyNodeBudgetBoundsMalformedAliasErrors(t *testing.T) {
+	root := dependencyFixture(t, "unused")
+	workflow := "invalid: &invalid true\njobs:\n  test:\n    steps:\n" + strings.Repeat("      - *invalid\n", 50)
+	if err := os.WriteFile(filepath.Join(root, ".github/workflows/ci.yml"), []byte(workflow), 0600); err != nil {
+		t.Fatal(err)
+	}
+	limits := DefaultDependencyLimits()
+	limits.Nodes = 4
+	r, err := AuditDependencies(root, dependencyFake(), limits)
+	if err == nil || r.Complete || len(r.Errors) > limits.Nodes+1 || !strings.Contains(err.Error(), "node budget exhausted") {
+		t.Fatalf("malformed aliases expanded beyond the budget: %d errors, %v", len(r.Errors), err)
+	}
+}
+
+func TestDependencyDepthBudgetPreventsChildRead(t *testing.T) {
+	f := dependencyFake()
+	f.data["example/wrapper@"+depSHA+":action.yml"] = "runs:\n  using: composite\n  steps:\n    - uses: example/child@v1\n"
+	f.data["example/child@"+childSHA+":action.yml"] = "runs: {using: node24, main: index.js}"
+	limits := DefaultDependencyLimits()
+	limits.Depth = 1
+	r, err := AuditDependencies(dependencyFixture(t, "example/wrapper@"+depSHA), f, limits)
+	if err == nil || r.Complete {
+		t.Fatalf("expected incomplete scan: %+v, %v", r, err)
+	}
+	if f.resolves != 0 || f.reads["example/child@"+childSHA+":action.yml"] != 0 {
+		t.Fatalf("contacted child outside depth budget: resolves=%d, reads=%v", f.resolves, f.reads)
+	}
+	last := r.Edges[len(r.Edges)-1]
+	if last.Status != "depth-budget-exhausted" || !last.Mutable || last.Commit != "" {
+		t.Fatalf("unresolved child misreported: %+v", last)
+	}
+}
+
+func TestDependencyByteBudgetStopsRemainingRoots(t *testing.T) {
+	root := dependencyFixture(t, "example/child@v1")
+	for _, name := range []string{"a.yml", "b.yml", "c.yml"} {
+		if err := os.WriteFile(filepath.Join(root, ".github/workflows", name), []byte("jobs: {}\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	limits := DefaultDependencyLimits()
+	limits.Bytes = 1
+	r, err := AuditDependencies(root, dependencyFake(), limits)
+	if err == nil || r.Complete || len(r.Errors) != 1 || !strings.Contains(err.Error(), "byte budget exhausted") {
+		t.Fatalf("kept scanning after global byte budget exhaustion: %+v, %v", r, err)
+	}
+}
+
+func TestDependencyNodeBudgetBoundsEmptyRoots(t *testing.T) {
+	root := dependencyFixture(t, "unused")
+	for _, name := range []string{"a.yml", "b.yml", "c.yml", "d.yml", "ci.yml"} {
+		if err := os.WriteFile(filepath.Join(root, ".github/workflows", name), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	limits := DefaultDependencyLimits()
+	limits.Nodes = 3
+	r, err := AuditDependencies(root, dependencyFake(), limits)
+	if err == nil || r.Complete || len(r.Errors) != limits.Nodes+1 || !strings.Contains(err.Error(), "node budget exhausted") {
+		t.Fatalf("empty roots bypassed expansion accounting: %+v, %v", r, err)
+	}
+}
+
+func TestDependencyDefiningRepositoryCacheIsolation(t *testing.T) {
+	root := dependencyFixture(t, "example/first@"+depSHA)
+	file := filepath.Join(root, ".github/workflows/ci.yml")
+	workflow, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow = append(workflow, []byte("      - uses: example/second@"+depSHA+"\n")...)
+	if err := os.WriteFile(file, workflow, 0600); err != nil {
+		t.Fatal(err)
+	}
+	f := dependencyFake()
+	for _, repo := range []string{"example/first", "example/second"} {
+		f.data[repo+"@"+depSHA+":action.yml"] = "runs:\n  using: composite\n  steps:\n    - uses: $/child\n"
+	}
+	f.data["example/first@"+depSHA+":child/action.yml"] = "runs: {using: node24}"
+	f.data["example/second@"+depSHA+":child/action.yml"] = "runs:\n  using: composite\n  steps:\n    - uses: example/child@v1\n"
+	f.data["example/child@"+childSHA+":action.yml"] = "runs: {using: node24}"
+	r, err := AuditDependencies(root, f, DefaultDependencyLimits())
+	if err != nil || len(r.Edges) != 5 || !r.Edges[4].Mutable || r.Edges[3].Repository != "example/second" || r.Edges[3].Commit != depSHA {
+		t.Fatalf("defining repository or cached content crossed scopes: %+v, %v", r, err)
+	}
+}
+
+func TestDependencyMetadataCacheDoesNotOutliveAudit(t *testing.T) {
+	root := dependencyFixture(t, "example/wrapper@"+depSHA)
+	f := dependencyFake()
+	wrapper := "example/wrapper@" + depSHA + ":action.yml"
+	f.data[wrapper] = "runs: {using: node24}"
+	if r, err := AuditDependencies(root, f, DefaultDependencyLimits()); err != nil || r.Status != ScanStatusClean {
+		t.Fatalf("first scan: %+v, %v", r, err)
+	}
+	f.data[wrapper] = "runs:\n  using: composite\n  steps:\n    - uses: example/child@v1\n"
+	f.data["example/child@"+childSHA+":action.yml"] = "runs: {using: node24}"
+	r, err := AuditDependencies(root, f, DefaultDependencyLimits())
+	if err != nil || r.Status != ScanStatusFindings || len(r.Edges) != 2 || f.reads[wrapper] != 2 {
+		t.Fatalf("reused stale metadata from a previous audit: %+v, reads=%v, %v", r, f.reads, err)
+	}
+}
