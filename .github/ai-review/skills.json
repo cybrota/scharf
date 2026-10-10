@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "repository": "narenaryan/agent-skills",
+  "commit": "e78c7a981167a9d02b590310bf6e1b8c88df009d",
+  "skills": [
+    {
+      "path": "skills/engineering/ai-bug-patterns/SKILL.md",
+      "sha256": "58572da8b1008a7e1f20616cd6f86c81c65ca7b60356684a6095b3fe2e257be5"
+    },
+    {
+      "path": "skills/security/rbvm-applicability/SKILL.md",
+      "sha256": "caea87dc1f8bf4b5e14aac919598821878f6675f6ee2a553a97102e34a0efc20"
+    },
+    {
+      "path": "skills/security/rbvm-priority-decisions/SKILL.md",
+      "sha256": "7819dc001ee712b38563b624ed3cb5f906d440e721cbee52eaaaf5a4bb7b4e31"
+    },
+    {
+      "path": "skills/security/rbvm-verified-closure/SKILL.md",
+      "sha256": "c47de8e818f83e774af84d81fee339afeb48826e4310b7497eb34278ca56050f"
+    },
+    {
+      "path": "skills/security/security-gate-rollout/SKILL.md",
+      "sha256": "cb6f6a1da2921bc55a9c19367931393c170a994b7e8087ab5718dbfcebe5eaef"
+    }
+  ]
+}

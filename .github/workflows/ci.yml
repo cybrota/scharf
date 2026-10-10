@@ -16,6 +16,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
 
+      - name: Test AI reviewer without credentials
+        run: python3 -m unittest discover -s scripts -p 'ai_review_test.py'
+
       - name: Audit GitHub actions
         uses: cybrota/scharf-action@c0d0eb13ca383e5a3ec947d754f61c9e61fab5ba
         env:

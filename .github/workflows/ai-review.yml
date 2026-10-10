@@ -1,0 +1,85 @@
+name: Centralized skills AI review
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Open Scharf PR number (diff is sent to selected provider)'
+        required: true
+        type: string
+      expected_head_sha:
+        description: 'Exact 40-character PR head SHA you inspected'
+        required: true
+        type: string
+      expected_base_sha:
+        description: 'Exact 40-character PR base SHA you inspected'
+        required: true
+        type: string
+      provider:
+        description: 'API provider; needs its matching repository secret'
+        required: true
+        type: choice
+        options: [openai, anthropic]
+      model:
+        description: 'Explicit API model ID available to your account'
+        required: true
+        type: string
+      approve_send:
+        description: 'I reviewed this diff for sensitive data and approve one paid API request'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ai-review-${{ github.repository }}-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    if: github.repository == 'cybrota/scharf' && github.ref == 'refs/heads/main' && inputs.approve_send
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted workflow revision only
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Test reviewer without credentials
+        run: python3 -m unittest discover -s scripts -p 'ai_review_test.py'
+      - name: Review PR data with openai (no PR execution)
+        if: inputs.provider == 'openai'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROVIDER_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          EXPECTED_BASE_SHA: ${{ inputs.expected_base_sha }}
+          PROVIDER: openai
+          MODEL: ${{ inputs.model }}
+          APPROVE_SEND: ${{ inputs.approve_send }}
+        run: python3 scripts/ai_review.py
+      - name: Review PR data with anthropic (no PR execution)
+        if: inputs.provider == 'anthropic'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROVIDER_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          EXPECTED_BASE_SHA: ${{ inputs.expected_base_sha }}
+          PROVIDER: anthropic
+          MODEL: ${{ inputs.model }}
+          APPROVE_SEND: ${{ inputs.approve_send }}
+        run: python3 scripts/ai_review.py
+      - name: Upload plain JSON report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ai-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ai-review-report.json
+          if-no-files-found: ignore
+          retention-days: 7
