@@ -33,3 +33,4 @@ dist
 .DS_Store
 .lsp
 version.json
+/target
